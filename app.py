@@ -1315,6 +1315,7 @@ def home():
 
 @app.route(f'/webhook/{BOT_TOKEN}', methods=['GET'])
 def webhook_test():
+    logger.info("Webhook test endpoint called")
     return "Webhook is live! ✅", 200
 
 @app.route(f'/webhook/{BOT_TOKEN}', methods=['POST'])
@@ -1339,8 +1340,14 @@ async def webhook():
 async def set_webhook():
     for attempt in range(3):
         try:
-            await telegram_app.bot.set_webhook(url=f"{WEBHOOK_URL}/webhook/{BOT_TOKEN}")
-            logger.info(f"Webhook set successfully to {WEBHOOK_URL}/webhook/{BOT_TOKEN}")
+            logger.info(f"Attempting to set webhook to {WEBHOOK_URL}/webhook/{BOT_TOKEN}")
+            webhook_info = await telegram_app.bot.get_webhook_info()
+            logger.info(f"Current webhook info: {webhook_info}")
+            if webhook_info.url != f"{WEBHOOK_URL}/webhook/{BOT_TOKEN}":
+                await telegram_app.bot.set_webhook(url=f"{WEBHOOK_URL}/webhook/{BOT_TOKEN}")
+                logger.info(f"Webhook set successfully to {WEBHOOK_URL}/webhook/{BOT_TOKEN}")
+            else:
+                logger.info("Webhook already set to correct URL")
             return True
         except telegram.error.NetworkError as e:
             logger.error(f"Failed to set webhook, attempt {attempt + 1}: {str(e)}")
@@ -1352,14 +1359,26 @@ async def set_webhook():
                 })
                 return False
             time.sleep(2)
+        except Exception as e:
+            logger.error(f"Unexpected error setting webhook, attempt {attempt + 1}: {str(e)}")
+            if attempt == 2:
+                save_log("errors", {
+                    "error": f"Unexpected error setting webhook: {str(e)}",
+                    "timestamp": datetime.now().isoformat()
+                })
+                return False
+            time.sleep(2)
     return False
 
 async def initialize_bot():
     try:
         logger.info("Starting bot initialization")
+        # Log environment variables (mask sensitive info)
+        logger.info(f"Environment variables: BOT_TOKEN={BOT_TOKEN[:4]}...{BOT_TOKEN[-4:]}, ADMIN_ID={ADMIN_ID}, WEBHOOK_URL={WEBHOOK_URL}, MONGO_URI={MONGO_URI[:20]}...")
+        
         # Load Excel data on startup
-        global df
         logger.info("Loading Excel data")
+        global df
         df = load_excel_on_startup()
         logger.info("Excel data loaded successfully")
         
@@ -1376,9 +1395,11 @@ async def initialize_bot():
         # Set webhook
         logger.info("Setting webhook")
         if not await set_webhook():
+            logger.error("Failed to set webhook after retries")
             raise Exception("Failed to set webhook after retries")
-        logger.info("Bot initialization completed successfully")
         
+        logger.info("Bot initialization completed successfully")
+        return True
     except Exception as e:
         logger.error(f"Bot initialization failed: {str(e)}")
         save_log("errors", {
