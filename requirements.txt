@@ -1,8 +1,7 @@
-flask[async]==3.1.2
-python-telegram-bot==22.3
-pymongo==4.14.1
-pandas==2.3.2
-openpyxl==3.1.5
-gunicorn==23.0.0
-gevent==24.2.1
-Pillow==10.4.0  # Add this if needed
+flask[async]==3.1.2  # For async support, if webhook used
+python-telegram-bot==22.3  # Specific version for stability
+pymongo==4.14.1  # MongoDB driver with connection pooling
+pandas==2.3.2  # Excel file handling
+openpyxl==3.1.5  # Excel file reading/writing
+gunicorn==23.0.0  # Web server for webhook mode
+gevent==24.2.1  # Async support for gunicorn
