@@ -1,9 +1,8 @@
-from flask import Flask, request
 import pandas as pd
 import os
 from datetime import datetime
 import telegram
-from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton, Document, InputFile
+from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton, Document, InputFile, PhotoSize
 from telegram.ext import (
     ApplicationBuilder, CommandHandler, MessageHandler, filters,
     ContextTypes, CallbackQueryHandler
@@ -15,43 +14,21 @@ import io
 import importlib.metadata
 import json
 import time
-import asyncio
-import logging
-
-# Set up logging
-logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
-logger = logging.getLogger(__name__)
-
-# Flask app
-app = Flask(__name__)
 
 # Check python-telegram-bot version
 try:
     telegram_version = importlib.metadata.version("python-telegram-bot")
-    logger.info(f"Using python-telegram-bot version: {telegram_version}")
+    print(f"Using python-telegram-bot version: {telegram_version}")
     DOCUMENT_FILTER = filters.Document.ALL
+    PHOTO_FILTER = filters.PHOTO  # Add photo filter
 except:
-    logger.error("python-telegram-bot not installed correctly")
+    print("Error: python-telegram-bot not installed correctly.")
     raise ImportError("Please install python-telegram-bot==22.3")
 
 # CONFIG
-BOT_TOKEN = os.getenv('BOT_TOKEN')
-ADMIN_ID = os.getenv('ADMIN_ID')
-MONGO_URI = os.getenv('MONGO_URI')
-WEBHOOK_URL = os.getenv('WEBHOOK_URL')
-
-# Validate environment variables
-if not all([BOT_TOKEN, ADMIN_ID, MONGO_URI, WEBHOOK_URL]):
-    missing_vars = [var for var, val in [('BOT_TOKEN', BOT_TOKEN), ('ADMIN_ID', ADMIN_ID), ('MONGO_URI', MONGO_URI), ('WEBHOOK_URL', WEBHOOK_URL)] if not val]
-    logger.error(f"Missing environment variables: {', '.join(missing_vars)}")
-    raise ValueError(f"Missing environment variables: {', '.join(missing_vars)}")
-
-try:
-    ADMIN_ID = int(ADMIN_ID)
-except ValueError:
-    logger.error("ADMIN_ID must be a valid integer")
-    raise ValueError("ADMIN_ID must be a valid integer")
-
+BOT_TOKEN = os.getenv('BOT_TOKEN', '7966520702:AAEeHTQcwoPsFHxWLa8j1peOcIIKZB8SU14')
+ADMIN_ID = int(os.getenv('ADMIN_ID', '7730908928'))
+MONGO_URI = os.getenv('MONGO_URI', 'mongodb+srv://sniper:sniper@cluster0.dibtnwa.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0&readPreference=primary')
 MONGO_DB = "telegram_bot"
 
 # MongoDB Setup
@@ -64,18 +41,15 @@ try:
     logs_collection = db['logs']
     feedback_collection = db['feedback']
     blocked_collection = db['blocked_users']
-    logger.info("MongoDB connected successfully")
 except Exception as e:
-    logger.error(f"MongoDB connection error: {e}")
+    print(f"MongoDB connection error: {e}")
     raise
 
 # GLOBAL DATA
 df = pd.DataFrame()
 
-# Initialize Telegram Application
-telegram_app = ApplicationBuilder().token(BOT_TOKEN).build()
-
 # ---------- Helpers ------------
+
 def load_all_excels():
     dfs = []
     for filename in get_excel_files():
@@ -86,50 +60,51 @@ def load_all_excels():
                 excel_dfs = pd.read_excel(file_stream, sheet_name=None, engine='openpyxl')
                 for sheet_name, sheet_df in excel_dfs.items():
                     if not sheet_df.empty:
-                        logger.info(f"Loaded sheet '{sheet_name}' from {filename} with {len(sheet_df)} rows")
+                        print(f"Loaded sheet '{sheet_name}' from {filename} with {len(sheet_df)} rows")
                         dfs.append(sheet_df)
                     else:
-                        logger.info(f"Sheet '{sheet_name}' in {filename} is empty")
+                        print(f"Sheet '{sheet_name}' in {filename} is empty")
             else:
-                logger.info(f"No data found for {filename} in GridFS")
+                print(f"No data found for {filename} in GridFS")
         except Exception as e:
-            logger.error(f"Error loading excel {filename}: {str(e)}")
+            print(f"Error loading excel {filename}: {str(e)}")
     if dfs:
         combined_df = pd.concat(dfs, ignore_index=True)
-        logger.info(f"Combined DataFrame with {len(combined_df)} rows and columns: {list(combined_df.columns)}")
+        print(f"Combined DataFrame with {len(combined_df)} rows and columns: {list(combined_df.columns)}")
         return combined_df
-    logger.info("No data loaded into DataFrame")
+    print("No data loaded into DataFrame")
     return pd.DataFrame()
 
-def save_excel_to_gridfs(file_data, filename):
+def save_file_to_gridfs(file_data, filename, content_type="application/octet-stream"):
     try:
         if fs.exists({"filename": filename}):
             fs.delete(fs.find_one({"filename": filename})._id)
-        fs.put(file_data, filename=filename)
-        logger.info(f"Excel '{filename}' saved to GridFS")
+        fs.put(file_data, filename=filename, content_type=content_type)
+        print(f"File '{filename}' saved to GridFS with content_type {content_type}.")
     except Exception as e:
-        logger.error(f"Error saving excel {filename}: {e}")
+        print(f"Error saving file {filename}: {e}")
         raise
 
-def get_excel_files():
+def get_files():
     files = [f.filename for f in fs.find()]
-    logger.info(f"Found {len(files)} Excel files in GridFS: {files}")
+    print(f"Found {len(files)} files in GridFS: {files}")
     return files
 
 def load_excel_on_startup():
     global df
     df = load_all_excels()
-    logger.info(f"DataFrame on startup: {len(df)} rows, columns: {list(df.columns) if not df.empty else 'None'}")
+    print(f"DataFrame on startup: {len(df)} rows, columns: {list(df.columns) if not df.empty else 'None'}")
     return df
 
 # ---------- MongoDB Helper Functions ------------
+
 def load_authorized_users():
     try:
         users = [user['user_id'] for user in users_collection.find()]
-        logger.info(f"Loaded authorized users: {users}")
+        print(f"Loaded authorized users: {users}")
         return users
     except Exception as e:
-        logger.error(f"Error loading authorized users: {str(e)}")
+        print(f"Error loading authorized users: {str(e)}")
         save_log("errors", {
             "error": f"Failed to load authorized users: {str(e)}",
             "timestamp": datetime.now().isoformat()
@@ -146,15 +121,15 @@ def save_authorized_user(user_id, retries=3):
             )
             updated_doc = users_collection.find_one({'user_id': user_id})
             if updated_doc:
-                logger.info(f"Successfully saved authorized user: {user_id}")
+                print(f"Successfully saved authorized user: {user_id}")
                 return True
             else:
-                logger.warning(f"Verification failed for saving authorized user: {user_id}, attempt {attempt + 1}")
+                print(f"Verification failed for saving authorized user: {user_id}, attempt {attempt + 1}")
                 if attempt == retries - 1:
                     raise Exception("Failed to verify saved authorized user after retries")
                 time.sleep(1)
         except Exception as e:
-            logger.error(f"Error saving authorized user {user_id}, attempt {attempt + 1}: {str(e)}")
+            print(f"Error saving authorized user {user_id}, attempt {attempt + 1}: {str(e)}")
             if attempt == retries - 1:
                 save_log("errors", {
                     "user_id": user_id,
@@ -168,9 +143,9 @@ def save_authorized_user(user_id, retries=3):
 def remove_authorized_user(user_id):
     try:
         users_collection.delete_one({'user_id': user_id})
-        logger.info(f"Removed authorized user: {user_id}")
+        print(f"Removed authorized user: {user_id}")
     except Exception as e:
-        logger.error(f"Error removing authorized user {user_id}: {str(e)}")
+        print(f"Error removing authorized user {user_id}: {str(e)}")
         save_log("errors", {
             "user_id": user_id,
             "error": f"Failed to remove authorized user: {str(e)}",
@@ -181,10 +156,10 @@ def remove_authorized_user(user_id):
 def load_blocked_users():
     try:
         blocked = [user['user_id'] for user in blocked_collection.find()]
-        logger.info(f"Loaded blocked users: {blocked}")
+        print(f"Loaded blocked users: {blocked}")
         return blocked
     except Exception as e:
-        logger.error(f"Error loading blocked users: {str(e)}")
+        print(f"Error loading blocked users: {str(e)}")
         save_log("errors", {
             "error": f"Failed to load blocked users: {str(e)}",
             "timestamp": datetime.now().isoformat()
@@ -198,9 +173,9 @@ def save_blocked_user(user_id):
             {'$set': {'user_id': user_id}},
             upsert=True
         )
-        logger.info(f"Saved blocked user: {user_id}")
+        print(f"Saved blocked user: {user_id}")
     except Exception as e:
-        logger.error(f"Error saving blocked user {user_id}: {str(e)}")
+        print(f"Error saving blocked user {user_id}: {str(e)}")
         save_log("errors", {
             "user_id": user_id,
             "error": f"Failed to save blocked user: {str(e)}",
@@ -211,9 +186,9 @@ def save_blocked_user(user_id):
 def remove_blocked_user(user_id):
     try:
         blocked_collection.delete_one({'user_id': user_id})
-        logger.info(f"Removed blocked user: {user_id}")
+        print(f"Removed blocked user: {user_id}")
     except Exception as e:
-        logger.error(f"Error removing blocked user {user_id}: {str(e)}")
+        print(f"Error removing blocked user {user_id}: {str(e)}")
         save_log("errors", {
             "user_id": user_id,
             "error": f"Failed to remove blocked user: {str(e)}",
@@ -230,10 +205,10 @@ def load_access_count():
                 'count': doc.get('count', 0),
                 'total_limit': doc.get('total_limit', 1)
             }
-        logger.info(f"Freshly loaded access counts: {counts}")
+        print(f"Freshly loaded access counts: {counts}")
         return counts
     except Exception as e:
-        logger.error(f"Error loading access counts: {str(e)}")
+        print(f"Error loading access counts: {str(e)}")
         save_log("errors", {
             "error": f"Failed to load access counts: {str(e)}",
             "timestamp": datetime.now().isoformat()
@@ -250,15 +225,15 @@ def save_access_count(user_id, count, total_limit, retries=3):
             )
             updated_doc = access_collection.find_one({'user_id': user_id})
             if updated_doc and updated_doc['count'] == count and updated_doc['total_limit'] == total_limit:
-                logger.info(f"Successfully saved access count for user {user_id}: count={count}, total_limit={total_limit}")
+                print(f"Successfully saved access count for user {user_id}: count={count}, total_limit={total_limit}")
                 return True
             else:
-                logger.warning(f"Verification failed for user {user_id}: expected count={count}, total_limit={total_limit}, got {updated_doc}, attempt {attempt + 1}")
+                print(f"Verification failed for user {user_id}: expected count={count}, total_limit={total_limit}, got {updated_doc}, attempt {attempt + 1}")
                 if attempt == retries - 1:
                     raise Exception("Failed to verify saved access count after retries")
                 time.sleep(1)
         except Exception as e:
-            logger.error(f"Error saving access count for user {user_id}, attempt {attempt + 1}: {str(e)}")
+            print(f"Error saving access count for user {user_id}, attempt {attempt + 1}: {str(e)}")
             if attempt == retries - 1:
                 save_log("errors", {
                     "user_id": user_id,
@@ -274,10 +249,10 @@ def load_logs():
         log_doc = logs_collection.find_one() or {
             "access_requests": [], "searches": [], "approvals": [], "feedbacks": [], "errors": []
         }
-        logger.info(f"Loaded logs: {list(log_doc.keys())}")
+        print(f"Loaded logs: {list(log_doc.keys())}")
         return log_doc
     except Exception as e:
-        logger.error(f"Error loading logs: {str(e)}")
+        print(f"Error loading logs: {str(e)}")
         save_log("errors", {
             "error": f"Failed to load logs: {str(e)}",
             "timestamp": datetime.now().isoformat()
@@ -291,9 +266,9 @@ def save_log(log_type, log_data):
             {'$push': {log_type: log_data}},
             upsert=True
         )
-        logger.info(f"Saved log type {log_type}: {log_data}")
+        print(f"Saved log type {log_type}: {log_data}")
     except Exception as e:
-        logger.error(f"Error saving log type {log_type}: {str(e)}")
+        print(f"Error saving log type {log_type}: {str(e)}")
         try:
             logs_collection.update_one(
                 {},
@@ -309,10 +284,10 @@ def save_log(log_type, log_data):
 def load_feedback():
     try:
         feedback = list(feedback_collection.find())
-        logger.info(f"Loaded feedback: {len(feedback)} entries")
+        print(f"Loaded feedback: {len(feedback)} entries")
         return feedback
     except Exception as e:
-        logger.error(f"Error loading feedback: {str(e)}")
+        print(f"Error loading feedback: {str(e)}")
         save_log("errors", {
             "error": f"Failed to load feedback: {str(e)}",
             "timestamp": datetime.now().isoformat()
@@ -322,9 +297,9 @@ def load_feedback():
 def save_feedback_data(feedback_data):
     try:
         feedback_collection.insert_one(feedback_data)
-        logger.info(f"Saved feedback: {feedback_data}")
+        print(f"Saved feedback: {feedback_data}")
     except Exception as e:
-        logger.error(f"Error saving feedback: {str(e)}")
+        print(f"Error saving feedback: {str(e)}")
         save_log("errors", {
             "error": f"Failed to save feedback: {str(e)}",
             "timestamp": datetime.now().isoformat()
@@ -332,11 +307,12 @@ def save_feedback_data(feedback_data):
         raise
 
 # ---------- Bot Commands -------------
+
 async def check_blocked(user_id, update, context):
     blocked = load_blocked_users()
     if user_id in blocked:
         await update.message.reply_text("❌ You are blocked from using this bot.")
-        logger.info(f"Blocked user {user_id} attempted to use command")
+        print(f"Blocked user {user_id} attempted to use command")
         return True
     return False
 
@@ -344,6 +320,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.message.from_user.id
     if await check_blocked(user_id, update, context):
         return
+
     authorized = load_authorized_users()
     if user_id in authorized or user_id == ADMIN_ID:
         await update.message.reply_text(
@@ -356,7 +333,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "/profile - View usage stats\n"
             "/feedback <message> - Send feedback\n"
             "/help - Show commands\n"
-            "/logout - Remove access"
+            "/logout - Remove access\n"
+            "/listphotos - List available photos (admin)\n"
+            "/getphoto <filename> - Get a photo (authorized users)"
         )
     else:
         try:
@@ -382,7 +361,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     })
                     break
                 except telegram.error.BadRequest as e:
-                    logger.error(f"Error sending access request to admin {ADMIN_ID}, attempt {attempt + 1}: {str(e)}")
+                    print(f"Error sending access request to admin {ADMIN_ID}, attempt {attempt + 1}: {str(e)}")
                     if attempt == 2:
                         await update.message.reply_text("⚠️ Failed to send access request to admin. Please try again later or contact @Darksniperrx.")
                         save_log("errors", {
@@ -393,7 +372,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         return
                     time.sleep(1)
         except Exception as e:
-            logger.error(f"Error in start command for user {user_id}: {str(e)}")
+            print(f"Error in start command for user {user_id}: {str(e)}")
             await update.message.reply_text("❌ An error occurred while processing your request. Contact @Darksniperrx.")
             save_log("errors", {
                 "user_id": user_id,
@@ -405,6 +384,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.message.from_user.id
     if await check_blocked(user_id, update, context):
         return
+
     if user_id == ADMIN_ID:
         await update.message.reply_text(
             "📋 Bot Commands by sniper:\n"
@@ -426,7 +406,9 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "/replyfeedback <user_id> <msg> - Reply to feedback (admin)\n"
             "/exportusers - Export authorized users (admin)\n"
             "/logout - Remove access\n"
-            "/help - Show this message"
+            "/help - Show this message\n"
+            "/listphotos - List available photos (admin)\n"
+            "/uploadphoto - Upload a photo (admin)"
         )
     else:
         await update.message.reply_text(
@@ -438,7 +420,8 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "/profile - View usage stats\n"
             "/feedback <message> - Send feedback\n"
             "/logout - Remove access\n"
-            "/help - Show this message"
+            "/help - Show this message\n"
+            "/getphoto <filename> - Get a photo (authorized users)"
         )
 
 async def listexcel(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -448,7 +431,7 @@ async def listexcel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if user_id != ADMIN_ID:
         await update.message.reply_text("❌ Only admin can list Excel files.")
         return
-    excel_files = get_excel_files()
+    excel_files = [f for f in get_files() if f.endswith(('.xlsx', '.csv'))]
     if not excel_files:
         await update.message.reply_text("❌ No Excel files found.")
         return
@@ -563,7 +546,7 @@ async def feedback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 )
                 break
             except telegram.error.BadRequest as e:
-                logger.error(f"Error sending feedback to admin {ADMIN_ID}, attempt {attempt + 1}: {str(e)}")
+                print(f"Error sending feedback to admin {ADMIN_ID}, attempt {attempt + 1}: {str(e)}")
                 if attempt == 2:
                     save_log("errors", {
                         "user_id": user_id,
@@ -573,7 +556,7 @@ async def feedback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     break
                 time.sleep(1)
     except Exception as e:
-        logger.error(f"Error in feedback for user {user_id}: {str(e)}")
+        print(f"Error in feedback for user {user_id}: {str(e)}")
         await update.message.reply_text("❌ Error saving feedback. Please try again.")
         save_log("errors", {
             "user_id": user_id,
@@ -586,63 +569,75 @@ async def perform_search(update: Update, context: ContextTypes.DEFAULT_TYPE, col
     user_id = update.message.from_user.id
     if await check_blocked(user_id, update, context):
         return
+
     authorized = load_authorized_users()
     access_count = load_access_count()
     user_data = access_count.get(str(user_id), {'count': 0, 'total_limit': 1})
     count = user_data['count']
     total_limit = user_data['total_limit']
-    logger.info(f"Performing search for user {user_id}: count={count}, total_limit={total_limit}, column={column}")
+    print(f"Performing search for user {user_id}: count={count}, total_limit={total_limit}, column={column}")
+
     if user_id != ADMIN_ID and user_id not in authorized:
         await update.message.reply_text("🔒 You are not authorized. Use /start to request access.")
         return
+
     if user_id != ADMIN_ID and count >= total_limit:
         await update.message.reply_text(
             f"⚠️ Your search limit is reached. Current: count={count}, total_limit={total_limit}. Contact @Darksniperrx for more searches."
         )
-        logger.info(f"Search blocked for user {user_id}: count={count}, total_limit={total_limit}")
+        print(f"Search blocked for user {user_id}: count={count}, total_limit={total_limit}")
         return
-    logger.info(f"DataFrame state before search: {len(df)} rows, columns: {list(df.columns) if not df.empty else 'None'}")
-   
+
+    print(f"DataFrame state before search: {len(df)} rows, columns: {list(df.columns) if not df.empty else 'None'}")
+    
     if df.empty:
-        logger.info(f"DataFrame is empty when searching for column {column}. Reloading data...")
+        print(f"DataFrame is empty when searching for column {column}. Reloading data...")
         df = load_all_excels()
-        logger.info(f"DataFrame state after reload: {len(df)} rows, columns: {list(df.columns) if not df.empty else 'None'}")
+        print(f"DataFrame state after reload: {len(df)} rows, columns: {list(df.columns) if not df.empty else 'None'}")
         if df.empty:
-            logger.info("DataFrame still empty after reload")
+            print("DataFrame still empty after reload")
             await update.message.reply_text("❗ No Excel data loaded. Contact admin to upload Excel files.")
             return
+
     if not context.args:
         await update.message.reply_text(f"Usage: /{column.lower()} <query>")
         return
+
     try:
         query = " ".join(context.args).strip().lower()
-        logger.info(f"Searching for query '{query}' in column '{column}'")
+        print(f"Searching for query '{query}' in column '{column}'")
         if column not in df.columns:
-            logger.error(f"Column '{column}' not found in DataFrame. Available columns: {list(df.columns)}")
+            print(f"Column '{column}' not found in DataFrame. Available columns: {list(df.columns)}")
             await update.message.reply_text(f"❌ Column '{column}' not found in Excel data. Available columns: {', '.join(df.columns)}")
             return
+
         matches = df[df[column].fillna('').astype(str).str.lower().str.contains(query, na=False)]
-        logger.info(f"Found {len(matches)} matches for query '{query}' in column '{column}'")
+        print(f"Found {len(matches)} matches for query '{query}' in column '{column}'")
+
         if matches.empty:
             await update.message.reply_text("❌ No matching records found.")
             return
+
         context.user_data['search_results'] = matches.to_dict(orient='records')
         context.user_data['search_query'] = query
         context.user_data['search_column'] = column
         context.user_data['current_page'] = 0
         context.user_data['results_per_page'] = 10
+
         if user_id != ADMIN_ID and len(matches) == 1:
             if not save_access_count(user_id, count + 1, total_limit):
                 await update.message.reply_text("❌ Error updating search count. Please try again.")
                 return
-            logger.info(f"Incremented search count for user {user_id} to {count + 1}/{total_limit} for single result")
+            print(f"Incremented search count for user {user_id} to {count + 1}/{total_limit} for single result")
+
         if len(matches) == 1:
             json_text = json.dumps(context.user_data['search_results'], indent=2, default=str)
-            logger.info(f"Sending single result, JSON length: {len(json_text)}")
+            print(f"Sending single result, JSON length: {len(json_text)}")
             await update.message.reply_text(json_text)
         else:
             await send_paginated_results(update, context)
             return
+
         save_log("searches", {
             "user_id": user_id,
             "query": query,
@@ -651,7 +646,7 @@ async def perform_search(update: Update, context: ContextTypes.DEFAULT_TYPE, col
             "timestamp": datetime.now().isoformat()
         })
     except Exception as e:
-        logger.error(f"Error in search for user {user_id}: {str(e)}")
+        print(f"Error in search for user {user_id}: {str(e)}")
         await update.message.reply_text(f"❌ Search failed: {str(e)}")
         save_log("errors", {
             "user_id": user_id,
@@ -665,13 +660,16 @@ async def send_paginated_results(update: Update, context: ContextTypes.DEFAULT_T
     column = context.user_data.get('search_column', '')
     current_page = context.user_data.get('current_page', 0)
     results_per_page = context.user_data.get('results_per_page', 10)
+
     if not results:
         await update.message.reply_text("❌ No search results available.")
         return
+
     total_results = len(results)
     total_pages = (total_results + results_per_page - 1) // results_per_page
     start_idx = current_page * results_per_page
     end_idx = min(start_idx + results_per_page, total_results)
+
     summary_text = f"Found {total_results} matches for '{query}' in {column}. Showing {start_idx + 1}-{end_idx} of {total_results}:\n\n"
     buttons = []
     for idx, record in enumerate(results[start_idx:end_idx], start=start_idx):
@@ -679,6 +677,7 @@ async def send_paginated_results(update: Update, context: ContextTypes.DEFAULT_T
         name = record.get('Name', 'Unknown')
         summary_text += f"{idx + 1}. {name} ({course})\n"
         buttons.append([InlineKeyboardButton(f"{name} ({course})", callback_data=f"select_{idx}")])
+
     nav_buttons = []
     if current_page > 0:
         nav_buttons.append(InlineKeyboardButton("⬅️ Previous", callback_data=f"page_{current_page - 1}"))
@@ -686,16 +685,17 @@ async def send_paginated_results(update: Update, context: ContextTypes.DEFAULT_T
         nav_buttons.append(InlineKeyboardButton("Next ➡️", callback_data=f"page_{current_page + 1}"))
     if nav_buttons:
         buttons.append(nav_buttons)
+
     keyboard = InlineKeyboardMarkup(buttons)
-    logger.info(f"Sending paginated results: page {current_page + 1}/{total_pages}, showing {start_idx + 1}-{end_idx}")
-   
+    print(f"Sending paginated results: page {current_page + 1}/{total_pages}, showing {start_idx + 1}-{end_idx}")
+    
     try:
         if isinstance(update, telegram.Update) and update.callback_query:
             await update.callback_query.edit_message_text(summary_text, reply_markup=keyboard)
         else:
             await update.message.reply_text(summary_text, reply_markup=keyboard)
     except Exception as e:
-        logger.error(f"Error sending paginated results: {str(e)}")
+        print(f"Error sending paginated results: {str(e)}")
         save_log("errors", {
             "error": f"Failed to send paginated results: {str(e)}",
             "timestamp": datetime.now().isoformat()
@@ -717,26 +717,30 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if user_id != ADMIN_ID:
         await update.message.reply_text("❌ Only admin can upload files.")
         return
+
     doc: Document = update.message.document
     file_name = doc.file_name
     is_csv = file_name.lower().endswith(".csv")
     is_xlsx = file_name.lower().endswith(".xlsx")
+
     if not (is_csv or is_xlsx):
         await update.message.reply_text("❌ Only .csv or .xlsx files allowed.")
         return
+
     try:
         file = await doc.get_file()
         file_data = await file.download_as_bytearray()
         file_stream = io.BytesIO(file_data)
+
         # Handle CSV or XLSX
         if is_csv:
             # Read CSV and convert to XLSX
             try:
                 csv_df = pd.read_csv(file_stream)
-                logger.info(f"Read CSV file {file_name} with {len(csv_df)} rows, columns: {list(csv_df.columns)}")
+                print(f"Read CSV file {file_name} with {len(csv_df)} rows, columns: {list(csv_df.columns)}")
             except Exception as e:
                 error_msg = f"❌ Error reading CSV file: {str(e)}"
-                logger.error(error_msg)
+                print(error_msg)
                 await update.message.reply_text(error_msg)
                 save_log("errors", {
                     "user_id": user_id,
@@ -744,6 +748,7 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     "timestamp": datetime.now().isoformat()
                 })
                 return
+
             # Validate required columns
             columns_found = set(csv_df.columns)
             required_columns = {'Name', 'Student Email', 'Student Mobile', 'Course'}
@@ -751,13 +756,14 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 missing = required_columns - columns_found
                 await update.message.reply_text(f"❌ File missing required columns: {', '.join(missing)}")
                 return
+
             # Convert to XLSX
             xlsx_stream = io.BytesIO()
             csv_df.to_excel(xlsx_stream, index=False, engine='openpyxl')
             xlsx_stream.seek(0)
             # Use .xlsx extension for storage
             xlsx_file_name = file_name.rsplit('.', 1)[0] + '.xlsx'
-            save_excel_to_gridfs(xlsx_stream, xlsx_file_name)
+            save_file_to_gridfs(xlsx_stream.getvalue(), xlsx_file_name, content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
             await update.message.reply_text(f"✅ CSV file {file_name} converted to {xlsx_file_name} and uploaded.")
         else:
             # Handle XLSX directly
@@ -768,26 +774,114 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
             for sheet_name, sheet_df in excel_dfs.items():
                 columns_found.update(sheet_df.columns)
                 row_counts.append(len(sheet_df))
-                logger.info(f"Sheet '{sheet_name}' in {file_name} has {len(sheet_df)} rows, columns: {list(sheet_df.columns)}")
-           
+                print(f"Sheet '{sheet_name}' in {file_name} has {len(sheet_df)} rows, columns: {list(sheet_df.columns)}")
+            
             required_columns = {'Name', 'Student Email', 'Student Mobile', 'Course'}
             if not required_columns.issubset(columns_found):
                 missing = required_columns - columns_found
                 await update.message.reply_text(f"❌ Excel file missing required columns: {', '.join(missing)}")
                 return
-            save_excel_to_gridfs(file_stream, file_name)
+
+            save_file_to_gridfs(file_stream.getvalue(), file_name, content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
             await update.message.reply_text(f"✅ Excel file {file_name} uploaded.")
+
         # Reload data
         global df
         df = load_all_excels()
         await update.message.reply_text(f"✅ Data reloaded. DataFrame has {len(df)} rows, columns: {list(df.columns) if not df.empty else 'None'}.")
     except Exception as e:
         error_msg = f"❌ Error processing file {file_name}: {str(e)}"
-        logger.error(error_msg)
+        print(error_msg)
         await update.message.reply_text(error_msg)
         save_log("errors", {
             "user_id": user_id,
             "error": f"File upload failed: {str(e)}",
+            "timestamp": datetime.now().isoformat()
+        })
+
+async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.message.from_user.id
+    if await check_blocked(user_id, update, context):
+        return
+    if user_id != ADMIN_ID:
+        await update.message.reply_text("❌ Only admin can upload photos.")
+        return
+
+    photo: PhotoSize = update.message.photo[-1]  # Get the highest resolution photo
+    file = await photo.get_file()
+    file_name = f"photo_{int(time.time())}.jpg"  # Unique filename with timestamp
+
+    try:
+        file_data = await file.download_as_bytearray()
+        save_file_to_gridfs(file_data, file_name, content_type="image/jpeg")
+        await update.message.reply_text(f"✅ Photo uploaded as '{file_name}'.")
+        save_log("uploads", {
+            "user_id": user_id,
+            "filename": file_name,
+            "type": "photo",
+            "timestamp": datetime.now().isoformat()
+        })
+    except Exception as e:
+        error_msg = f"❌ Error uploading photo: {str(e)}"
+        print(error_msg)
+        await update.message.reply_text(error_msg)
+        save_log("errors", {
+            "user_id": user_id,
+            "error": f"Photo upload failed: {str(e)}",
+            "timestamp": datetime.now().isoformat()
+        })
+
+async def listphotos(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.message.from_user.id
+    if await check_blocked(user_id, update, context):
+        return
+    if user_id != ADMIN_ID:
+        await update.message.reply_text("❌ Only admin can list photos.")
+        return
+    photo_files = [f for f in get_files() if f.endswith(('.jpg', '.jpeg', '.png'))]
+    if not photo_files:
+        await update.message.reply_text("❌ No photos found.")
+        return
+    files_list = "\n".join([f"- {f}" for f in photo_files])
+    await update.message.reply_text(f"📷 Available photos:\n{files_list}")
+
+async def getphoto(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.message.from_user.id
+    if await check_blocked(user_id, update, context):
+        return
+    authorized = load_authorized_users()
+    if user_id not in authorized and user_id != ADMIN_ID:
+        await update.message.reply_text("🔒 You are not authorized. Use /start to request access.")
+        return
+    if len(context.args) != 1:
+        await update.message.reply_text("Usage: /getphoto <filename>")
+        return
+    filename = context.args[0]
+    try:
+        file_data = fs.find_one({"filename": filename})
+        if not file_data:
+            await update.message.reply_text(f"❌ Photo '{filename}' not found.")
+            return
+        file_stream = io.BytesIO(file_data.read())
+        file_stream.name = filename
+        await update.message.reply_photo(
+            photo=InputFile(file_stream, filename=filename),
+            caption=f"📷 Photo: {filename}"
+        )
+        if user_id != ADMIN_ID:
+            access_count = load_access_count()
+            user_data = access_count.get(str(user_id), {'count': 0, 'total_limit': 1})
+            count = user_data['count']
+            total_limit = user_data['total_limit']
+            if not save_access_count(user_id, count + 1, total_limit):
+                await update.message.reply_text("❌ Error updating access count. Please try again.")
+    except Exception as e:
+        error_msg = f"❌ Error retrieving photo '{filename}': {str(e)}"
+        print(error_msg)
+        await update.message.reply_text(error_msg)
+        save_log("errors", {
+            "user_id": user_id,
+            "error": f"Get photo failed: {str(e)}",
             "timestamp": datetime.now().isoformat()
         })
 
@@ -798,12 +892,15 @@ async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if user_id != ADMIN_ID:
         await update.message.reply_text("❌ Only admin can broadcast.")
         return
+
     if not context.args:
         await update.message.reply_text("Usage: /broadcast <message>")
         return
+
     msg = " ".join(context.args)
     authorized = load_authorized_users()
     total_sent = 0
+
     for uid in authorized:
         for attempt in range(3):
             try:
@@ -811,7 +908,7 @@ async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 total_sent += 1
                 break
             except telegram.error.BadRequest as e:
-                logger.error(f"Broadcast error to {uid}, attempt {attempt + 1}: {e}")
+                print(f"Broadcast error to {uid}, attempt {attempt + 1}: {e}")
                 if attempt == 2:
                     save_log("errors", {
                         "user_id": uid,
@@ -819,6 +916,7 @@ async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         "timestamp": datetime.now().isoformat()
                     })
                 time.sleep(1)
+
     await update.message.reply_text(f"Broadcast sent to {total_sent} users.")
 
 async def addaccess(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -828,9 +926,11 @@ async def addaccess(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if user_id != ADMIN_ID:
         await update.message.reply_text("❌ Only admin can add access.")
         return
+
     if len(context.args) != 2:
         await update.message.reply_text("Usage: /addaccess <user_id> <count>")
         return
+
     try:
         target_user = int(context.args[0])
         add_count = int(context.args[1])
@@ -840,6 +940,7 @@ async def addaccess(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except ValueError:
         await update.message.reply_text("Invalid arguments. User ID and count must be numbers.")
         return
+
     try:
         access_count = load_access_count()
         user_data = access_count.get(str(target_user), {'count': 0, 'total_limit': 1})
@@ -849,11 +950,11 @@ async def addaccess(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not save_access_count(target_user, current_count, new_limit):
             await update.message.reply_text(f"❌ Failed to update limit for user {target_user}. Please try again.")
             return
-       
+        
         access_count = load_access_count()
         updated_data = access_count.get(str(target_user), {'count': 0, 'total_limit': 1})
         if updated_data['total_limit'] != new_limit:
-            logger.error(f"Error: total_limit not updated correctly for user {target_user}. Expected {new_limit}, got {updated_data['total_limit']}")
+            print(f"Error: total_limit not updated correctly for user {target_user}. Expected {new_limit}, got {updated_data['total_limit']}")
             await update.message.reply_text(f"❌ Failed to verify updated limit for user {target_user}. Please try again.")
             save_log("errors", {
                 "user_id": target_user,
@@ -861,6 +962,7 @@ async def addaccess(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "timestamp": datetime.now().isoformat()
             })
             return
+
         await update.message.reply_text(
             f"✅ Added {add_count} searches for user {target_user}. Total limit: {new_limit}, Used: {current_count}, Remaining: {new_limit - current_count}"
         )
@@ -872,7 +974,7 @@ async def addaccess(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 )
                 break
             except telegram.error.BadRequest as e:
-                logger.error(f"Error notifying user {target_user}, attempt {attempt + 1}: {e}")
+                print(f"Error notifying user {target_user}, attempt {attempt + 1}: {e}")
                 if attempt == 2:
                     await update.message.reply_text(f"⚠️ Added searches but could not notify user {target_user}: {str(e)}")
                     save_log("errors", {
@@ -882,7 +984,7 @@ async def addaccess(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     })
                 time.sleep(1)
     except Exception as e:
-        logger.error(f"Error in addaccess for user {target_user}: {str(e)}")
+        print(f"Error in addaccess for user {target_user}: {str(e)}")
         await update.message.reply_text(f"❌ Error adding access for user {target_user}: {str(e)}")
         save_log("errors", {
             "user_id": target_user,
@@ -910,7 +1012,7 @@ async def block(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await context.bot.send_message(chat_id=uid, text="❌ You have been blocked from using sniper's Bot.")
                 break
             except telegram.error.BadRequest as e:
-                logger.error(f"Error notifying blocked user {uid}, attempt {attempt + 1}: {e}")
+                print(f"Error notifying blocked user {uid}, attempt {attempt + 1}: {e}")
                 if attempt == 2:
                     save_log("errors", {
                         "user_id": uid,
@@ -945,7 +1047,7 @@ async def unblock(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await context.bot.send_message(chat_id=uid, text="✅ You have been unblocked and can now use sniper's Bot.")
                 break
             except telegram.error.BadRequest as e:
-                logger.error(f"Error notifying unblocked user {uid}, attempt {attempt + 1}: {e}")
+                print(f"Error notifying unblocked user {uid}, attempt {attempt + 1}: {e}")
                 if attempt == 2:
                     save_log("errors", {
                         "user_id": uid,
@@ -973,7 +1075,7 @@ async def logs(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         logs = load_logs()
         text = "📜 Recent Logs by sniper:\n"
-        log_types = ["access_requests", "searches", "approvals", "feedbacks", "errors"]
+        log_types = ["access_requests", "searches", "approvals", "feedbacks", "errors", "uploads"]
         for log_type in log_types:
             entries = logs.get(log_type, [])
             if entries:
@@ -1007,12 +1109,13 @@ async def analytics(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     try:
         log_doc = logs_collection.find_one() or {
-            "access_requests": [], "searches": [], "approvals": [], "feedbacks": [], "errors": []
+            "access_requests": [], "searches": [], "approvals": [], "feedbacks": [], "errors": [], "uploads": []
         }
         total_searches = len(log_doc.get("searches", []))
         total_feedbacks = feedback_collection.count_documents({})
         total_users = users_collection.count_documents({})
-        total_excel_files = len(get_excel_files())
+        total_excel_files = len([f for f in get_files() if f.endswith(('.xlsx', '.csv'))])
+        total_photos = len([f for f in get_files() if f.endswith(('.jpg', '.jpeg', '.png'))])
         total_blocked = blocked_collection.count_documents({})
         await update.message.reply_text(
             f"📊 sniper's Bot Stats:\n"
@@ -1020,7 +1123,8 @@ async def analytics(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"🚫 Blocked Users: {total_blocked}\n"
             f"🔍 Searches: {total_searches}\n"
             f"📝 Feedbacks: {total_feedbacks}\n"
-            f"📄 Excel Files: {total_excel_files}"
+            f"📄 Excel Files: {total_excel_files}\n"
+            f"📷 Photos: {total_photos}"
         )
     except Exception as e:
         await update.message.reply_text(f"❌ Error fetching analytics: {str(e)}")
@@ -1049,7 +1153,7 @@ async def replyfeedback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await update.message.reply_text("✅ Feedback reply sent.")
                 break
             except telegram.error.BadRequest as e:
-                logger.error(f"Error sending feedback reply to {uid}, attempt {attempt + 1}: {e}")
+                print(f"Error sending feedback reply to {uid}, attempt {attempt + 1}: {e}")
                 if attempt == 2:
                     await update.message.reply_text(f"❌ Could not send message to user {uid}: {str(e)}")
                     save_log("errors", {
@@ -1103,6 +1207,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = query.from_user.id
     if await check_blocked(user_id, update, context):
         return
+
     try:
         if data.startswith("approve_"):
             if user_id != ADMIN_ID:
@@ -1139,7 +1244,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         )
                         break
                     except telegram.error.BadRequest as e:
-                        logger.error(f"Error notifying approved user {uid}, attempt {attempt + 1}: {e}")
+                        print(f"Error notifying approved user {uid}, attempt {attempt + 1}: {e}")
                         if attempt == 2:
                             await query.edit_message_text(f"✅ Approved user {uid}, but could not notify user: {str(e)}")
                             save_log("errors", {
@@ -1178,7 +1283,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     )
                     break
                 except telegram.error.BadRequest as e:
-                    logger.error(f"Error notifying rejected user {uid}, attempt {attempt + 1}: {e}")
+                    print(f"Error notifying rejected user {uid}, attempt {attempt + 1}: {e}")
                     if attempt == 2:
                         await query.edit_message_text(f"❌ Rejected user {uid}, but could not notify user: {str(e)}")
                         save_log("errors", {
@@ -1193,12 +1298,12 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             user_data = access_count.get(str(user_id), {'count': 0, 'total_limit': 1})
             count = user_data['count']
             total_limit = user_data['total_limit']
-            logger.info(f"Checking limit for user {user_id} on selection: count={count}, total_limit={total_limit}")
+            print(f"Checking limit for user {user_id} on selection: count={count}, total_limit={total_limit}")
             if user_id != ADMIN_ID and count >= total_limit:
                 await query.message.reply_text(
                     f"⚠️ Your search limit is reached. Current: count={count}, total_limit={total_limit}. Contact @Darksniperrx for more searches."
                 )
-                logger.info(f"Selection blocked for user {user_id}: count={count}, total_limit={total_limit}")
+                print(f"Selection blocked for user {user_id}: count={count}, total_limit={total_limit}")
                 return
             try:
                 idx = int(data.split("_")[1])
@@ -1221,14 +1326,14 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 return
             selected_record = search_results[idx]
             json_text = json.dumps(selected_record, indent=2, default=str)
-            logger.info(f"Sending selected result index {idx}, JSON length: {len(json_text)}")
+            print(f"Sending selected result index {idx}, JSON length: {len(json_text)}")
             await query.message.reply_text(json_text)
             await query.edit_message_text(f"✅ Details sent for selected record.")
             if user_id != ADMIN_ID:
                 if not save_access_count(user_id, count + 1, total_limit):
                     await query.message.reply_text("❌ Error updating search count. Please try again.")
                     return
-                logger.info(f"Incremented search count for user {user_id} to {count + 1}/{total_limit} after selection")
+                print(f"Incremented search count for user {user_id} to {count + 1}/{total_limit} after selection")
         elif data.startswith("page_"):
             try:
                 page = int(data.split("_")[1])
@@ -1250,7 +1355,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "timestamp": datetime.now().isoformat()
             })
     except Exception as e:
-        logger.error(f"Error in callback_handler for user {user_id}, data {data}: {str(e)}")
+        print(f"Error in callback_handler for user {user_id}, data {data}: {str(e)}")
         await query.edit_message_text(f"❌ Error processing action: {str(e)}")
         save_log("errors", {
             "user_id": user_id,
@@ -1259,7 +1364,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         })
 
 async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    logger.error(f"Update {update} caused error: {context.error}")
+    print(f"Update {update} caused error: {context.error}")
     save_log("errors", {
         "error": f"Bot error: {str(context.error)}",
         "timestamp": datetime.now().isoformat()
@@ -1273,7 +1378,7 @@ async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 )
                 break
             except telegram.error.BadRequest as e:
-                logger.error(f"Error notifying admin of conflict, attempt {attempt + 1}: {e}")
+                print(f"Error notifying admin of conflict, attempt {attempt + 1}: {e}")
                 if attempt == 2:
                     save_log("errors", {
                         "error": f"Failed to notify admin of conflict after 3 attempts: {str(e)}",
@@ -1281,145 +1386,40 @@ async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     })
                 time.sleep(1)
 
-# Register handlers
-def register_handlers():
-    logger.info("Registering Telegram bot handlers")
-    telegram_app.add_handler(CommandHandler("start", start))
-    telegram_app.add_handler(CommandHandler("help", help_command))
-    telegram_app.add_handler(CommandHandler("listexcel", listexcel))
-    telegram_app.add_handler(CommandHandler("reload", reload))
-    telegram_app.add_handler(CommandHandler("logout", logout))
-    telegram_app.add_handler(CommandHandler("profile", profile))
-    telegram_app.add_handler(CommandHandler("userinfo", userinfo))
-    telegram_app.add_handler(CommandHandler("feedback", feedback))
-    telegram_app.add_handler(CommandHandler("name", search_name))
-    telegram_app.add_handler(CommandHandler("email", search_email))
-    telegram_app.add_handler(CommandHandler("phone", search_phone))
-    telegram_app.add_handler(CommandHandler("broadcast", broadcast))
-    telegram_app.add_handler(CommandHandler("addaccess", addaccess))
-    telegram_app.add_handler(CommandHandler("block", block))
-    telegram_app.add_handler(CommandHandler("unblock", unblock))
-    telegram_app.add_handler(CommandHandler("logs", logs))
-    telegram_app.add_handler(CommandHandler("analytics", analytics))
-    telegram_app.add_handler(CommandHandler("replyfeedback", replyfeedback))
-    telegram_app.add_handler(CommandHandler("exportusers", exportusers))
-    telegram_app.add_handler(MessageHandler(DOCUMENT_FILTER, handle_document))
-    telegram_app.add_handler(CallbackQueryHandler(callback_handler))
-    telegram_app.add_error_handler(error_handler)
-    logger.info("All handlers registered successfully")
+def main():
+    global df
+    df = load_excel_on_startup()
+    app = ApplicationBuilder().token(BOT_TOKEN).build()
 
-# Flask routes
-@app.route('/')
-def home():
-    return "Bot is running!"
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("help", help_command))
+    app.add_handler(CommandHandler("listexcel", listexcel))
+    app.add_handler(CommandHandler("reload", reload))
+    app.add_handler(CommandHandler("logout", logout))
+    app.add_handler(CommandHandler("profile", profile))
+    app.add_handler(CommandHandler("userinfo", userinfo))
+    app.add_handler(CommandHandler("feedback", feedback))
+    app.add_handler(CommandHandler("name", search_name))
+    app.add_handler(CommandHandler("email", search_email))
+    app.add_handler(CommandHandler("phone", search_phone))
+    app.add_handler(CommandHandler("broadcast", broadcast))
+    app.add_handler(CommandHandler("addaccess", addaccess))
+    app.add_handler(CommandHandler("block", block))
+    app.add_handler(CommandHandler("unblock", unblock))
+    app.add_handler(CommandHandler("logs", logs))
+    app.add_handler(CommandHandler("analytics", analytics))
+    app.add_handler(CommandHandler("replyfeedback", replyfeedback))
+    app.add_handler(CommandHandler("exportusers", exportusers))
+    app.add_handler(MessageHandler(DOCUMENT_FILTER, handle_document))
+    app.add_handler(MessageHandler(PHOTO_FILTER, handle_photo))  # Add photo handler
+    app.add_handler(CommandHandler("listphotos", listphotos))   # Add list photos command
+    app.add_handler(CommandHandler("getphoto", getphoto))       # Add get photo command
+    app.add_handler(CommandHandler("uploadphoto", lambda u, c: u.message.reply_text("📷 Please send the photo to upload.")))  # Placeholder for upload instruction
+    app.add_handler(CallbackQueryHandler(callback_handler))
+    app.add_error_handler(error_handler)
 
-@app.route(f'/webhook/{BOT_TOKEN}', methods=['GET'])
-def webhook_test():
-    logger.info("Webhook test endpoint called")
-    return "Webhook is live! ✅", 200
-
-@app.route(f'/webhook/{BOT_TOKEN}', methods=['POST'])
-async def webhook():
-    try:
-        update = telegram.Update.de_json(request.get_json(force=True), telegram_app.bot)
-        if update:
-            logger.info(f"Received update: {update}")
-            await telegram_app.process_update(update)
-            return "ok", 200
-        else:
-            logger.error("Invalid update received")
-            return "Invalid update", 400
-    except Exception as e:
-        logger.error(f"Error processing webhook update: {str(e)}")
-        save_log("errors", {
-            "error": f"Webhook error: {str(e)}",
-            "timestamp": datetime.now().isoformat()
-        })
-        return "Error processing update", 500
-
-async def set_webhook():
-    for attempt in range(3):
-        try:
-            logger.info(f"Attempting to set webhook to {WEBHOOK_URL}/webhook/{BOT_TOKEN}")
-            webhook_info = await telegram_app.bot.get_webhook_info()
-            logger.info(f"Current webhook info: {webhook_info}")
-            if webhook_info.url != f"{WEBHOOK_URL}/webhook/{BOT_TOKEN}":
-                await telegram_app.bot.set_webhook(url=f"{WEBHOOK_URL}/webhook/{BOT_TOKEN}")
-                logger.info(f"Webhook set successfully to {WEBHOOK_URL}/webhook/{BOT_TOKEN}")
-            else:
-                logger.info("Webhook already set to correct URL")
-            return True
-        except telegram.error.NetworkError as e:
-            logger.error(f"Failed to set webhook, attempt {attempt + 1}: {str(e)}")
-            if attempt == 2:
-                logger.error("Webhook setup failed after 3 attempts")
-                save_log("errors", {
-                    "error": f"Failed to set webhook after 3 attempts: {str(e)}",
-                    "timestamp": datetime.now().isoformat()
-                })
-                return False
-            time.sleep(2)
-        except Exception as e:
-            logger.error(f"Unexpected error setting webhook, attempt {attempt + 1}: {str(e)}")
-            if attempt == 2:
-                save_log("errors", {
-                    "error": f"Unexpected error setting webhook: {str(e)}",
-                    "timestamp": datetime.now().isoformat()
-                })
-                return False
-            time.sleep(2)
-    return False
-
-async def initialize_bot():
-    try:
-        logger.info("Starting bot initialization")
-        # Log environment variables (mask sensitive info)
-        logger.info(f"Environment variables: BOT_TOKEN={BOT_TOKEN[:4]}...{BOT_TOKEN[-4:]}, ADMIN_ID={ADMIN_ID}, WEBHOOK_URL={WEBHOOK_URL}, MONGO_URI={MONGO_URI[:20]}...")
-        
-        # Load Excel data on startup
-        logger.info("Loading Excel data")
-        global df
-        df = load_excel_on_startup()
-        logger.info("Excel data loaded successfully")
-        
-        # Register handlers
-        logger.info("Registering handlers")
-        register_handlers()
-        logger.info("Handlers registered successfully")
-        
-        # Initialize Telegram application
-        logger.info("Initializing Telegram application")
-        await telegram_app.initialize()
-        logger.info("Telegram application initialized successfully")
-        
-        # Set webhook
-        logger.info("Setting webhook")
-        if not await set_webhook():
-            logger.error("Failed to set webhook after retries")
-            raise Exception("Failed to set webhook after retries")
-        
-        logger.info("Bot initialization completed successfully")
-        return True
-    except Exception as e:
-        logger.error(f"Bot initialization failed: {str(e)}")
-        save_log("errors", {
-            "error": f"Bot initialization failed: {str(e)}",
-            "timestamp": datetime.now().isoformat()
-        })
-        raise
+    print("🤖 sniper's Bot running...")
+    app.run_polling()
 
 if __name__ == "__main__":
-    try:
-        logger.info("Starting main application")
-        # Run initialization in async context
-        asyncio.run(initialize_bot())
-        # Run Flask app
-        logger.info("🤖 sniper's Bot running with Flask webhook...")
-        app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
-    except Exception as e:
-        logger.error(f"Fatal error in main: {str(e)}")
-        save_log("errors", {
-            "error": f"Fatal error in main: {str(e)}",
-            "timestamp": datetime.now().isoformat()
-        })
-        raise
+    main()
