@@ -1,6 +1,5 @@
-flask[async]
+flask
 python-telegram-bot==22.3
 pymongo
 pandas
 openpyxl
-gunicorn
