@@ -1,4 +1,4 @@
-flask
+flask[async]==3.1.2
 python-telegram-bot==22.3
 pymongo
 pandas
