@@ -28,10 +28,10 @@ app = Flask(__name__)
 # Check python-telegram-bot version
 try:
     telegram_version = importlib.metadata.version("python-telegram-bot")
-    print(f"Using python-telegram-bot version: {telegram_version}")
+    logger.info(f"Using python-telegram-bot version: {telegram_version}")
     DOCUMENT_FILTER = filters.Document.ALL
 except:
-    print("Error: python-telegram-bot not installed correctly.")
+    logger.error("python-telegram-bot not installed correctly")
     raise ImportError("Please install python-telegram-bot==22.3")
 
 # CONFIG
@@ -106,7 +106,7 @@ def save_excel_to_gridfs(file_data, filename):
         if fs.exists({"filename": filename}):
             fs.delete(fs.find_one({"filename": filename})._id)
         fs.put(file_data, filename=filename)
-        logger.info(f"Excel '{filename}' saved to GridFS.")
+        logger.info(f"Excel '{filename}' saved to GridFS")
     except Exception as e:
         logger.error(f"Error saving excel {filename}: {e}")
         raise
@@ -1283,6 +1283,7 @@ async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # Register handlers
 def register_handlers():
+    logger.info("Registering Telegram bot handlers")
     telegram_app.add_handler(CommandHandler("start", start))
     telegram_app.add_handler(CommandHandler("help", help_command))
     telegram_app.add_handler(CommandHandler("listexcel", listexcel))
@@ -1305,6 +1306,7 @@ def register_handlers():
     telegram_app.add_handler(MessageHandler(DOCUMENT_FILTER, handle_document))
     telegram_app.add_handler(CallbackQueryHandler(callback_handler))
     telegram_app.add_error_handler(error_handler)
+    logger.info("All handlers registered successfully")
 
 # Flask routes
 @app.route('/')
@@ -1335,30 +1337,50 @@ async def webhook():
         return "Error processing update", 500
 
 async def set_webhook():
-    try:
-        await telegram_app.bot.set_webhook(url=f"{WEBHOOK_URL}/webhook/{BOT_TOKEN}")
-        logger.info(f"Webhook set to {WEBHOOK_URL}/webhook/{BOT_TOKEN}")
-    except Exception as e:
-        logger.error(f"Error setting webhook: {str(e)}")
-        save_log("errors", {
-            "error": f"Failed to set webhook: {str(e)}",
-            "timestamp": datetime.now().isoformat()
-        })
+    for attempt in range(3):
+        try:
+            await telegram_app.bot.set_webhook(url=f"{WEBHOOK_URL}/webhook/{BOT_TOKEN}")
+            logger.info(f"Webhook set successfully to {WEBHOOK_URL}/webhook/{BOT_TOKEN}")
+            return True
+        except telegram.error.NetworkError as e:
+            logger.error(f"Failed to set webhook, attempt {attempt + 1}: {str(e)}")
+            if attempt == 2:
+                logger.error("Webhook setup failed after 3 attempts")
+                save_log("errors", {
+                    "error": f"Failed to set webhook after 3 attempts: {str(e)}",
+                    "timestamp": datetime.now().isoformat()
+                })
+                return False
+            time.sleep(2)
+    return False
 
 async def initialize_bot():
     try:
+        logger.info("Starting bot initialization")
         # Load Excel data on startup
         global df
+        logger.info("Loading Excel data")
         df = load_excel_on_startup()
+        logger.info("Excel data loaded successfully")
+        
         # Register handlers
+        logger.info("Registering handlers")
         register_handlers()
+        logger.info("Handlers registered successfully")
+        
         # Initialize Telegram application
+        logger.info("Initializing Telegram application")
         await telegram_app.initialize()
-        logger.info("Telegram bot initialized successfully")
+        logger.info("Telegram application initialized successfully")
+        
         # Set webhook
-        await set_webhook()
+        logger.info("Setting webhook")
+        if not await set_webhook():
+            raise Exception("Failed to set webhook after retries")
+        logger.info("Bot initialization completed successfully")
+        
     except Exception as e:
-        logger.error(f"Error initializing bot: {str(e)}")
+        logger.error(f"Bot initialization failed: {str(e)}")
         save_log("errors", {
             "error": f"Bot initialization failed: {str(e)}",
             "timestamp": datetime.now().isoformat()
@@ -1366,8 +1388,17 @@ async def initialize_bot():
         raise
 
 if __name__ == "__main__":
-    # Run initialization in async context
-    asyncio.run(initialize_bot())
-    # Run Flask app
-    logger.info("🤖 sniper's Bot running with Flask webhook...")
-    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
+    try:
+        logger.info("Starting main application")
+        # Run initialization in async context
+        asyncio.run(initialize_bot())
+        # Run Flask app
+        logger.info("🤖 sniper's Bot running with Flask webhook...")
+        app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
+    except Exception as e:
+        logger.error(f"Fatal error in main: {str(e)}")
+        save_log("errors", {
+            "error": f"Fatal error in main: {str(e)}",
+            "timestamp": datetime.now().isoformat()
+        })
+        raise
