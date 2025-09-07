@@ -4,5 +4,3 @@ pymongo==4.14.1
 pandas==2.3.2
 openpyxl==3.1.5
 gunicorn==23.0.0
-# gevent==24.2.1  # Comment out or replace with older version if needed
-gevent==23.9.1    # Try this older version
