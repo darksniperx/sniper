@@ -1,4 +1,4 @@
 pandas
 python-telegram-bot
 pymongo
-openpyx
+openpyx1
