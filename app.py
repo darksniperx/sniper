@@ -133,8 +133,23 @@ def load_all_excels():
             logger.error(f"Error loading excel {filename}: {str(e)}")
     
     if dfs:
+        # Combine all DataFrames
         combined_df = pd.concat(dfs, ignore_index=True)
         logger.info(f"Combined DataFrame with {len(combined_df)} rows and columns: {list(combined_df.columns)}")
+        
+        # Optional: Normalize string columns to lowercase to handle case-sensitive duplicates
+        for col in combined_df.select_dtypes(include=['object']).columns:
+            combined_df[col] = combined_df[col].str.lower()
+        
+        # Remove duplicates (considering all columns)
+        initial_rows = len(combined_df)
+        # To deduplicate based on specific columns, uncomment the next line and comment the one after
+        # combined_df = combined_df.drop_duplicates(subset=['Name', 'Student Email', 'Student Mobile', 'Course'])
+        combined_df = combined_df.drop_duplicates()
+        final_rows = len(combined_df)
+        duplicates_removed = initial_rows - final_rows
+        logger.info(f"Deduplication: Removed {duplicates_removed} duplicate rows. Final DataFrame has {final_rows} rows.")
+        
         return combined_df
     
     logger.warning("No data loaded into DataFrame")
@@ -485,7 +500,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "/analytics - View bot stats (admin)\n"
             "/replyfeedback <user_id> <msg> - Reply to feedback (admin)\n"
             "/exportusers - Export authorized users (admin)\n"
-            "/logout - Remove access\n"
+            "/health - Check bot health (admin)\n"
             "/help - Show this message"
         )
     else:
