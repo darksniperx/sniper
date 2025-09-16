@@ -78,9 +78,7 @@ class MongoDBManager:
                 serverSelectionTimeoutMS=30000,
                 retryWrites=True
             )
-            # Test connection
             self.client.admin.command('ping')
-            
             self.db = self.client[MONGO_DB]
             self.fs = GridFS(self.db)
             self.users_collection = self.db['authorized_users']
@@ -88,7 +86,6 @@ class MongoDBManager:
             self.logs_collection = self.db['logs']
             self.feedback_collection = self.db['feedback']
             self.blocked_collection = self.db['blocked_users']
-            
             logger.info("MongoDB connected successfully")
         except Exception as e:
             logger.error(f"MongoDB connection error: {e}")
@@ -106,6 +103,71 @@ mongo_manager = MongoDBManager()
 
 # GLOBAL DATA
 df = pd.DataFrame()
+
+# Helper function to format student record into sections with emojis
+def format_student_record(record):
+    sections = {
+        "Personal Details": [
+            "Name", "Gender", "Category", "Date Of Birth", "Religion", "Nationality", "Blood Group",
+            "Student Aadhar No.", "Student Email", "Student Mobile"
+        ],
+        "Academic Details": [
+            "Course", "Stream", "Year", "Section", "Sub Section", "Admission No.", "Roll No.",
+            "Enrollment No", "Admission Date", "Admission Through", "State Rank", "ABC ID",
+            "Enquiry No", "Form No", "UPSEE Admitted Amount", "Status", "Sub-Status", "Remark"
+        ],
+        "School & Marks": [
+            "10th Board", "10th Passing Year", "10th School Name", "10th State", "10th Roll No.",
+            "10th Obt. Marks", "10th Max. Marks", "10th Percent Marks", "12th Board",
+            "12th Passing Year", "12th School Name", "12th State", "12th Roll No.",
+            "12th Obt. Marks", "12th Max. Marks", "12th Percent Marks", "PCM/PCB Option",
+            "12th PCM/PCB Percent", "English Marks", "Physics Marks", "Chemistry Marks",
+            "Maths/Bio. Marks", "Applied for any improvement paper", "Subject", "Result",
+            "Any grace in Qualifying Exam", "Details"
+        ],
+        "Family Details": [
+            "Father Name", "Father Occupation", "Father Mobile", "Father Email",
+            "Father Home Telephone", "Father Work Telephone", "Mother Name", "Mother Occupation",
+            "Mother Mobile", "Mother Email", "Mother Home Telephone", "Mother Work Telephone",
+            "Parents Income/ Lacs/PA"
+        ],
+        "Address": [
+            "Local Address", "Local City", "Local State", "Local Pincode",
+            "Permanent Address", "Permanent City", "Permanent State", "Permanent Pincode"
+        ],
+        "Hostel & Other Details": [
+            "Hostel Required", "Hostel Type", "Room Type", "Transport Required", "Shift", "TFW",
+            "EWS", "Appeared Entrance Exam", "Background", "State of Domicile",
+            "Local Guardian Name", "Relation with student", "Guardian Contact No",
+            "Guardian Telephone", "Guardian Address", "City", "State", "Pincode", "Exam Name",
+            "Roll No", "Category Rank", "Verification Center", "Graduation University",
+            "Graduation Passing Year", "Graduation College Name", "Graduation State",
+            "Graduation Roll No.", "Graduation Obt. Marks", "Graduation Max. Marks",
+            "Graduation Percent Marks", "Diploma University", "Diploma Passing Year",
+            "Diploma College Name", "Diploma State", "Diploma Roll No.", "Diploma Obt. Marks",
+            "Diploma Max. Marks", "Diploma Percent Marks", "SR No."
+        ]
+    }
+    emojis = {
+        "Personal Details": "👤",
+        "Academic Details": "🎓",
+        "School & Marks": "🏫",
+        "Family Details": "👨‍👩‍👧",
+        "Address": "🏠",
+        "Hostel & Other Details": "🛏"
+    }
+
+    output = []
+    for section, fields in sections.items():
+        section_output = [f"{emojis[section]} {section}:"]
+        for field in fields:
+            value = record.get(field, "Not Available")
+            if pd.isna(value) or value == "":
+                value = "Not Available"
+            section_output.append(f"- {field}: {value}")
+        output.append("\n".join(section_output))
+    
+    return output
 
 # ---------- Helpers ------------
 def get_db():
@@ -133,25 +195,16 @@ def load_all_excels():
             logger.error(f"Error loading excel {filename}: {str(e)}")
     
     if dfs:
-        # Combine all DataFrames
         combined_df = pd.concat(dfs, ignore_index=True)
         logger.info(f"Combined DataFrame with {len(combined_df)} rows and columns: {list(combined_df.columns)}")
-        
-        # Optional: Normalize string columns to lowercase to handle case-sensitive duplicates
         for col in combined_df.select_dtypes(include=['object']).columns:
             combined_df[col] = combined_df[col].str.lower()
-        
-        # Remove duplicates (considering all columns)
         initial_rows = len(combined_df)
-        # To deduplicate based on specific columns, uncomment the next line and comment the one after
-        # combined_df = combined_df.drop_duplicates(subset=['Name', 'Student Email', 'Student Mobile', 'Course'])
         combined_df = combined_df.drop_duplicates()
         final_rows = len(combined_df)
         duplicates_removed = initial_rows - final_rows
         logger.info(f"Deduplication: Removed {duplicates_removed} duplicate rows. Final DataFrame has {final_rows} rows.")
-        
         return combined_df
-    
     logger.warning("No data loaded into DataFrame")
     return pd.DataFrame()
 
@@ -222,20 +275,6 @@ def save_authorized_user(user_id, retries=3):
                 raise
             time.sleep(1)
     return False
-
-def remove_authorized_user(user_id):
-    db = get_db()
-    try:
-        db.users_collection.delete_one({'user_id': user_id})
-        logger.info(f"Removed authorized user: {user_id}")
-    except Exception as e:
-        logger.error(f"Error removing authorized user {user_id}: {str(e)}")
-        save_log("errors", {
-            "user_id": user_id,
-            "error": f"Failed to remove authorized user: {str(e)}",
-            "timestamp": datetime.now().isoformat()
-        })
-        raise
 
 def load_blocked_users():
     db = get_db()
@@ -429,8 +468,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "/phone <query> - Search by phone\n"
             "/profile - View usage stats\n"
             "/feedback <message> - Send feedback\n"
-            "/help - Show commands\n"
-            "/logout - Remove access"
+            "/help - Show commands"
         )
     else:
         try:
@@ -512,7 +550,6 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "/phone <query> - Search by phone\n"
             "/profile - View usage stats\n"
             "/feedback <message> - Send feedback\n"
-            "/logout - Remove access\n"
             "/help - Show this message"
         )
 
@@ -540,18 +577,6 @@ async def reload(update: Update, context: ContextTypes.DEFAULT_TYPE):
     global df
     df = load_all_excels()
     await update.message.reply_text(f"✅ Reloaded data from all Excel files. DataFrame has {len(df)} rows, columns: {list(df.columns) if not df.empty else 'None'}.")
-
-async def logout(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.message.from_user.id
-    if await check_blocked(user_id, update, context):
-        return
-    db = get_db()
-    if user_id in load_authorized_users():
-        remove_authorized_user(user_id)
-        db.access_collection.delete_one({'user_id': user_id})
-        await update.message.reply_text("❌ Access removed.")
-    else:
-        await update.message.reply_text("⚠️ You are not authorized.")
 
 async def profile(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.message.from_user.id
@@ -724,9 +749,9 @@ async def perform_search(update: Update, context: ContextTypes.DEFAULT_TYPE, col
             logger.info(f"Incremented search count for user {user_id} to {count + 1}/{total_limit} for single result")
 
         if len(matches) == 1:
-            json_text = json.dumps(context.user_data['search_results'], indent=2, default=str)
-            logger.info(f"Sending single result, JSON length: {len(json_text)}")
-            await update.message.reply_text(json_text)
+            formatted_sections = format_student_record(matches.iloc[0])
+            for section in formatted_sections:
+                await update.message.reply_text(section)
         else:
             await send_paginated_results(update, context)
             return
@@ -825,9 +850,7 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
         file_data = await file.download_as_bytearray()
         file_stream = io.BytesIO(file_data)
 
-        # Handle CSV or XLSX
         if is_csv:
-            # Read CSV and convert to XLSX
             try:
                 csv_df = pd.read_csv(file_stream)
                 logger.info(f"Read CSV file {file_name} with {len(csv_df)} rows, columns: {list(csv_df.columns)}")
@@ -842,7 +865,6 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 })
                 return
 
-            # Validate required columns
             columns_found = set(csv_df.columns)
             required_columns = {'Name', 'Student Email', 'Student Mobile', 'Course'}
             if not required_columns.issubset(columns_found):
@@ -850,16 +872,13 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await update.message.reply_text(f"❌ File missing required columns: {', '.join(missing)}")
                 return
 
-            # Convert to XLSX
             xlsx_stream = io.BytesIO()
             csv_df.to_excel(xlsx_stream, index=False, engine='openpyxl')
             xlsx_stream.seek(0)
-            # Use .xlsx extension for storage
             xlsx_file_name = file_name.rsplit('.', 1)[0] + '.xlsx'
             save_excel_to_gridfs(xlsx_stream, xlsx_file_name)
             await update.message.reply_text(f"✅ CSV file {file_name} converted to {xlsx_file_name} and uploaded.")
         else:
-            # Handle XLSX directly
             excel_dfs = pd.read_excel(file_stream, sheet_name=None, engine='openpyxl')
             file_stream.seek(0)
             columns_found = set()
@@ -878,7 +897,6 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
             save_excel_to_gridfs(file_stream, file_name)
             await update.message.reply_text(f"✅ Excel file {file_name} uploaded.")
 
-        # Reload data
         global df
         df = load_all_excels()
         await update.message.reply_text(f"✅ Data reloaded. DataFrame has {len(df)} rows, columns: {list(df.columns) if not df.empty else 'None'}.")
@@ -1331,9 +1349,9 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 })
                 return
             selected_record = search_results[idx]
-            json_text = json.dumps(selected_record, indent=2, default=str)
-            logger.info(f"Sending selected result index {idx}, JSON length: {len(json_text)}")
-            await query.message.reply_text(json_text)
+            formatted_sections = format_student_record(selected_record)
+            for section in formatted_sections:
+                await query.message.reply_text(section)
             await query.edit_message_text(f"✅ Details sent for selected record.")
             if user_id != ADMIN_ID:
                 if not save_access_count(user_id, count + 1, total_limit):
@@ -1393,24 +1411,20 @@ async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await asyncio.sleep(1)
 
 async def health_check(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Health check command to verify bot and database status"""
     user_id = update.message.from_user.id
     if user_id != ADMIN_ID:
         await update.message.reply_text("❌ Only admin can run health check.")
         return
     
     try:
-        # Test MongoDB connection
         db = get_db()
         db.client.admin.command('ping')
         mongo_status = "✅ Connected"
     except Exception as e:
         mongo_status = f"❌ Error: {str(e)}"
     
-    # Check DataFrame status
     df_status = f"✅ Loaded ({len(df)} rows, {len(df.columns) if not df.empty else 0} columns)" if not df.empty else "❌ Empty"
     
-    # Check collections
     try:
         users_count = db.users_collection.count_documents({})
         access_count = db.access_collection.count_documents({})
@@ -1431,15 +1445,12 @@ def main():
     global df
     df = load_excel_on_startup()
     
-    # Create application
     app = ApplicationBuilder().token(BOT_TOKEN).build()
 
-    # Add handlers
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("help", help_command))
     app.add_handler(CommandHandler("listexcel", listexcel))
     app.add_handler(CommandHandler("reload", reload))
-    app.add_handler(CommandHandler("logout", logout))
     app.add_handler(CommandHandler("profile", profile))
     app.add_handler(CommandHandler("userinfo", userinfo))
     app.add_handler(CommandHandler("feedback", feedback))
@@ -1459,11 +1470,9 @@ def main():
     app.add_handler(CallbackQueryHandler(callback_handler))
     app.add_error_handler(error_handler)
 
-    # Start the bot
     logger.info("🤖 sniper's Bot running...")
     
     if USE_WEBHOOK:
-        # Webhook mode for production
         app.run_webhook(
             listen="0.0.0.0",
             port=PORT,
@@ -1471,7 +1480,6 @@ def main():
             webhook_url=f"{WEBHOOK_URL}/{BOT_TOKEN}"
         )
     else:
-        # Polling mode for development
         app.run_polling()
 
 if __name__ == "__main__":
