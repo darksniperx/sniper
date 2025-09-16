@@ -169,6 +169,31 @@ def format_student_record(record):
     
     return output
 
+# Helper to send admin notification
+async def notify_admin(context, user_id, username, query, column, student_name):
+    message = (
+        f"📢 New Search by User:\n"
+        f"🆔 User ID: {user_id}\n"
+        f"🔗 Username: @{username or 'N/A'}\n"
+        f"🔍 Query: {query} (in {column})\n"
+        f"👤 Student: {student_name}\n"
+        f"⏰ Timestamp: {datetime.now().isoformat()}"
+    )
+    for attempt in range(3):
+        try:
+            await context.bot.send_message(chat_id=ADMIN_ID, text=message)
+            logger.info(f"Sent admin notification for user {user_id}, student {student_name}")
+            break
+        except telegram.error.BadRequest as e:
+            logger.error(f"Error sending admin notification for user {user_id}, attempt {attempt + 1}: {e}")
+            if attempt == 2:
+                save_log("errors", {
+                    "user_id": user_id,
+                    "error": f"Failed to send admin notification for student {student_name} after 3 attempts: {str(e)}",
+                    "timestamp": datetime.now().isoformat()
+                })
+            await asyncio.sleep(1)
+
 # ---------- Helpers ------------
 def get_db():
     mongo_manager.ensure_connection()
@@ -752,17 +777,23 @@ async def perform_search(update: Update, context: ContextTypes.DEFAULT_TYPE, col
             formatted_sections = format_student_record(matches.iloc[0])
             for section in formatted_sections:
                 await update.message.reply_text(section)
+            # Notify admin
+            if user_id != ADMIN_ID:
+                student_name = matches.iloc[0].get('Name', 'Unknown')
+                await notify_admin(context, user_id, update.message.from_user.username, query, column, student_name)
+            # Save log with student name
+            save_log("searches", {
+                "user_id": user_id,
+                "query": query,
+                "column": column,
+                "student_name": matches.iloc[0].get('Name', 'Unknown'),
+                "result_count": len(matches),
+                "timestamp": datetime.now().isoformat()
+            })
         else:
             await send_paginated_results(update, context)
             return
 
-        save_log("searches", {
-            "user_id": user_id,
-            "query": query,
-            "column": column,
-            "result_count": len(matches),
-            "timestamp": datetime.now().isoformat()
-        })
     except Exception as e:
         logger.error(f"Error in search for user {user_id}: {str(e)}")
         await update.message.reply_text(f"❌ Search failed: {str(e)}")
@@ -1340,6 +1371,8 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 })
                 return
             search_results = context.user_data.get('search_results', [])
+            query_text = context.user_data.get('search_query', 'Unknown')
+            column = context.user_data.get('search_column', 'Unknown')
             if not search_results or idx < 0 or idx >= len(search_results):
                 await query.edit_message_text("❌ Invalid selection or no search results available.")
                 save_log("errors", {
@@ -1358,6 +1391,18 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     await query.message.reply_text("❌ Error updating search count. Please try again.")
                     return
                 logger.info(f"Incremented search count for user {user_id} to {count + 1}/{total_limit} after selection")
+                # Notify admin
+                student_name = selected_record.get('Name', 'Unknown')
+                await notify_admin(context, user_id, query.from_user.username, query_text, column, student_name)
+                # Save log with student name
+                save_log("searches", {
+                    "user_id": user_id,
+                    "query": query_text,
+                    "column": column,
+                    "student_name": student_name,
+                    "result_count": 1,
+                    "timestamp": datetime.now().isoformat()
+                })
         elif data.startswith("page_"):
             try:
                 page = int(data.split("_")[1])
