@@ -488,15 +488,16 @@ def save_access_count(user_id, count, total_limit, retries=3):
             time.sleep(1)
     return False
 
-def load_logs():
-    db = get_db()
+def load_logs(limit: int = 10) -> list:
+    """Fetch recent logs from MongoDB with a limit."""
     try:
-        log_doc = db.logs_collection.find_one({}, {'logs': {'$slice': -100}}) or {'logs': []}
-        logger.info(f"Loaded recent logs: {len(log_doc.get('logs', []))} entries")
-        return log_doc.get('logs', [])
+        with MongoClient(MONGO_URI) as client:
+            db = client[MONGO_DB]
+            logs_collection = db['logs']
+            logs = list(logs_collection.find().sort("timestamp", -1).limit(limit))
+        return logs
     except Exception as e:
-        logger.error(f"Error loading logs: {str(e)}")
-        save_log("errors", {"error": f"Failed to load logs: {str(e)}"})
+        logger.error(f"Error fetching logs: {str(e)}")
         return []
 
 def load_feedback():
@@ -696,46 +697,56 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if await check_blocked(user_id, update, context):
         return
 
+    def escape_markdown(text: str) -> str:
+        """Escape all special characters for MarkdownV2."""
+        if not text:
+            return 'N/A'
+        special_chars = ['_', '*', '[', ']', '(', ')', '~', '`', '>', '#', '+', '-', '=', '|', '{', '}', '.', '!']
+        for char in special_chars:
+            text = text.replace(char, f'\\{char}')
+        return text
+
+    admin_username = escape_markdown(ADMIN_USERNAME)
     if user_id == ADMIN_ID:
         logger.info(f"Admin {user_id} accessing admin help menu")
         help_text = (
-            "🔐 *Admin Commands* 🔐\n\n"
-            "\/start \\- Request access to the bot\n"
-            "\/help \\- Display this help menu\n"
-            "\/name \\<query\\> \\- Search by name\n"
-            "\/email \\<query\\> \\- Search by email\n"
-            "\/phone \\<query\\> \\- Search by phone\n"
-            "\/downloadone \\<id\\> \\- Download salary slip \\(8000\\-9600, unlimited for admin\\)\n"
-            "\/downloadall \\- Download all salary slips \\(admin only\\)\n"
-            "\/listexcel \\- List available Excel files\n"
-            "\/reload \\- Reload Excel data\n"
-            "\/profile \\- View your usage stats\n"
-            "\/userinfo \\<user_id\\> \\- View user details\n"
-            "\/feedback \\<message\\> \\- Submit feedback\n"
-            "\/broadcast \\<message\\> \\- Send message to all users\n"
-            "\/addaccess \\<user_id\\> \\<limit\\> \\- Grant user access\n"
-            "\/block \\<user_id\\> \\- Block a user\n"
-            "\/unblock \\<user_id\\> \\- Unblock a user\n"
-            "\/logs \\<limit\\> \\- View recent logs\n"
-            "\/analytics \\- View bot analytics\n"
-            "\/replyfeedback \\<user_id\\> \\<message\\> \\- Reply to feedback\n"
-            "\/exportusers \\- Export authorized users\n"
-            "\/health \\- Check bot health\n"
-            "\/sharecommands \\- Share public commands\n\n"
-            f"🤖 *Powered by* \\{ADMIN_USERNAME}\\!"
+            f"🔐 *Admin Commands* 🔐\n\n"
+            f"\/start \\- Request access to the bot\n"
+            f"\/help \\- Display this help menu\n"
+            f"\/name \\<query\\> \\- Search by name\n"
+            f"\/email \\<query\\> \\- Search by email\n"
+            f"\/phone \\<query\\> \\- Search by phone\n"
+            f"\/downloadone \\<id\\> \\- Download salary slip \\(8000\\-9600, unlimited for admin\\)\n"
+            f"\/downloadall \\- Download all salary slips \\(admin only\\)\n"
+            f"\/listexcel \\- List available Excel files\n"
+            f"\/reload \\- Reload Excel data\n"
+            f"\/profile \\- View your usage stats\n"
+            f"\/userinfo \\<user_id\\> \\- View user details\n"
+            f"\/feedback \\<message\\> \\- Submit feedback\n"
+            f"\/broadcast \\<message\\> \\- Send message to all users\n"
+            f"\/addaccess \\<user_id\\> \\<limit\\> \\- Grant user access\n"
+            f"\/block \\<user_id\\> \\- Block a user\n"
+            f"\/unblock \\<user_id\\> \\- Unblock a user\n"
+            f"\/logs \\<limit\\> \\- View recent logs\n"
+            f"\/analytics \\- View bot analytics\n"
+            f"\/replyfeedback \\<user_id\\> \\<message\\> \\- Reply to feedback\n"
+            f"\/exportusers \\- Export authorized users\n"
+            f"\/health \\- Check bot health\n"
+            f"\/sharecommands \\- Share public commands\n\n"
+            f"🤖 *Powered by* {admin_username}\\!"
         )
     else:
         help_text = (
-            "🔍 *sniper's Bot Commands* 🔍\n\n"
-            "\/start \\- Request access to the bot\n"
-            "\/help \\- Display this help menu\n"
-            "\/name \\<query\\> \\- Search by name\n"
-            "\/email \\<query\\> \\- Search by email\n"
-            "\/phone \\<query\\> \\- Search by phone\n"
-            "\/downloadone \\<id\\> \\- Download salary slip \\(8000\\-9600, unlimited\\)\n"
-            "\/profile \\- View your usage stats\n"
-            "\/feedback \\<message\\> \\- Submit feedback\n\n"
-            f"🤖 *Powered by* \\{ADMIN_USERNAME}\\!"
+            f"🔍 *sniper's Bot Commands* 🔍\n\n"
+            f"\/start \\- Request access to the bot\n"
+            f"\/help \\- Display this help menu\n"
+            f"\/name \\<query\\> \\- Search by name\n"
+            f"\/email \\<query\\> \\- Search by email\n"
+            f"\/phone \\<query\\> \\- Search by phone\n"
+            f"\/downloadone \\<id\\> \\- Download salary slip \\(8000\\-9600, unlimited\\)\n"
+            f"\/profile \\- View your usage stats\n"
+            f"\/feedback \\<message\\> \\- Submit feedback\n\n"
+            f"🤖 *Powered by* {admin_username}\\!"
         )
 
     try:
@@ -748,9 +759,8 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "timestamp": datetime.now().isoformat()
         })
     except telegram.error.BadRequest as e:
-        logger.error(f"Error sending help message to user {user_id}, attempt 1: {str(e)}")
-        # Fallback to plain text
-        await update.message.reply_text("❌ Error displaying help menu. Contact @Darksniperrx.")
+        error_msg = escape_markdown(str(e))
+        await update.message.reply_text(f"❌ Error displaying help menu: {error_msg}", parse_mode='MarkdownV2')
         save_log("errors", {
             "user_id": user_id,
             "error": f"Failed to send help message: {str(e)}",
@@ -824,17 +834,19 @@ async def listexcel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if await check_blocked(user_id, update, context):
         return
     if user_id != ADMIN_ID:
-        await update.message.reply_text("❌ Only admin can list Excel files.", parse_mode='MarkdownV2')
+        await update.message.reply_text("❌ Only admin can list Excel files\\.", parse_mode='MarkdownV2')
         return
 
     try:
         excel_files = get_excel_files()
         if not excel_files:
-            await update.message.reply_text("📂 No Excel files found.", parse_mode='MarkdownV2')
+            await update.message.reply_text("📂 No Excel files found\\.", parse_mode='MarkdownV2')
             return
 
         def escape_markdown(text: str) -> str:
-            """Escape special characters for MarkdownV2."""
+            """Escape all special characters for MarkdownV2."""
+            if not text:
+                return 'N/A'
             special_chars = ['_', '*', '[', ']', '(', ')', '~', '`', '>', '#', '+', '-', '=', '|', '{', '}', '.', '!']
             for char in special_chars:
                 text = text.replace(char, f'\\{char}')
@@ -844,7 +856,8 @@ async def listexcel(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"📄 *Available Excel Files*:\n{files_list}", parse_mode='MarkdownV2')
         logger.info(f"Found {len(excel_files)} Excel files in GridFS: {excel_files}")
     except Exception as e:
-        await update.message.reply_text(f"❌ Error listing Excel files: {str(e)}", parse_mode='MarkdownV2')
+        error_msg = escape_markdown(str(e))
+        await update.message.reply_text(f"❌ Error listing Excel files: {error_msg}", parse_mode='MarkdownV2')
         save_log("errors", {
             "user_id": user_id,
             "error": f"Listexcel failed: {str(e)}",
@@ -852,7 +865,6 @@ async def listexcel(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "user_name": update.message.from_user.full_name,
             "user_username": update.message.from_user.username or 'N/A'
         })
-
 async def reload(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.message.from_user.id
     if await check_blocked(user_id, update, context):
@@ -1484,7 +1496,7 @@ async def logs(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if await check_blocked(user_id, update, context):
         return
     if user_id != ADMIN_ID:
-        await update.message.reply_text("❌ Only admin can view logs.", parse_mode='MarkdownV2')
+        await update.message.reply_text("❌ Only admin can view logs\\.", parse_mode='MarkdownV2')
         return
 
     try:
@@ -1495,7 +1507,9 @@ async def logs(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.info(f"Loaded recent logs: {len(logs)} entries")
 
         def escape_markdown(text: str) -> str:
-            """Escape special characters for MarkdownV2."""
+            """Escape all special characters for MarkdownV2."""
+            if not text:
+                return 'N/A'
             special_chars = ['_', '*', '[', ']', '(', ')', '~', '`', '>', '#', '+', '-', '=', '|', '{', '}', '.', '!']
             for char in special_chars:
                 text = text.replace(char, f'\\{char}')
@@ -1509,19 +1523,21 @@ async def logs(update: Update, context: ContextTypes.DEFAULT_TYPE):
             user_id_log = details.get('user_id', 'N/A')
             user_name = escape_markdown(details.get('user_name', 'N/A'))
             user_username = escape_markdown(details.get('user_username', 'N/A'))
+            details_str = escape_markdown(str(details))
             log_text += (
                 f"⏰ *Time*: {escape_markdown(timestamp)}\n"
                 f"📋 *Type*: {escape_markdown(log_type)}\n"
                 f"👤 *User*: {user_name} \\(@{user_username}, ID: {user_id_log}\\)\n"
-                f"🔍 *Details*: {escape_markdown(str(details))}\n\n"
+                f"🔍 *Details*: {details_str}\n\n"
             )
-            if len(log_text) > 3500:  # Avoid Telegram message length limit
-                log_text += f"⚠️ *Truncated*: Showing {len(logs)} of {limit} logs due to length."
+            if len(log_text) > 3500:  # Telegram ka message limit avoid karo
+                log_text += f"⚠️ *Truncated*: Showing {len(logs)} of {limit} logs due to length\\."
                 break
 
         await update.message.reply_text(log_text, parse_mode='MarkdownV2')
     except Exception as e:
-        await update.message.reply_text(f"❌ Error fetching logs: {str(e)}", parse_mode='MarkdownV2')
+        error_msg = escape_markdown(str(e))
+        await update.message.reply_text(f"❌ Error fetching logs: {error_msg}", parse_mode='MarkdownV2')
         save_log("errors", {
             "user_id": user_id,
             "error": f"Logs failed: {str(e)}",
@@ -1535,7 +1551,7 @@ async def analytics(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if await check_blocked(user_id, update, context):
         return
     if user_id != ADMIN_ID:
-        await update.message.reply_text("❌ Only admin can view analytics.", parse_mode='MarkdownV2')
+        await update.message.reply_text("❌ Only admin can view analytics\\.", parse_mode='MarkdownV2')
         return
 
     try:
@@ -1552,7 +1568,9 @@ async def analytics(update: Update, context: ContextTypes.DEFAULT_TYPE):
         total_feedback = len(feedback)
 
         def escape_markdown(text: str) -> str:
-            """Escape special characters for MarkdownV2."""
+            """Escape all special characters for MarkdownV2."""
+            if not text:
+                return 'N/A'
             special_chars = ['_', '*', '[', ']', '(', ')', '~', '`', '>', '#', '+', '-', '=', '|', '{', '}', '.', '!']
             for char in special_chars:
                 text = text.replace(char, f'\\{char}')
@@ -1563,7 +1581,7 @@ async def analytics(update: Update, context: ContextTypes.DEFAULT_TYPE):
             user_info = authorized.get(int(uid), {'name': 'N/A', 'username': 'N/A'})
             user_stats.append(
                 f"👤 {escape_markdown(user_info['name'])} \\(@{escape_markdown(user_info['username'])}, ID: {uid}\\)\n"
-                f"🔎 Searches: {data['count']}\\/ {data['total_limit']} \\(Remaining: {max(0, data['total_limit'] - data['count'])}\\)\n"
+                f"🔎 Searches: {data['count']}\\/{data['total_limit']} \\(Remaining: {max(0, data['total_limit'] - data['count'])}\\)\n"
             )
 
         analytics_text = (
@@ -1573,10 +1591,10 @@ async def analytics(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"📄 Total Salary Slip Downloads: {total_salary_downloads}\n"
             f"📥 Total Batch Downloads: {total_batch_downloads}\n"
             f"📝 Total Feedback Entries: {total_feedback}\n\n"
-            f"👤 *User Stats*:\n" + "\n".join(user_stats) if user_stats else "No user stats available."
+            f"👤 *User Stats*:\n" + "\n".join(user_stats) if user_stats else "No user stats available\\."
         )
-        if len(analytics_text) > 3500:  # Avoid Telegram message length limit
-            analytics_text = analytics_text[:3500] + f"\n⚠️ *Truncated*: Showing partial stats due to length."
+        if len(analytics_text) > 3500:
+            analytics_text = analytics_text[:3500] + f"\n⚠️ *Truncated*: Showing partial stats due to length\\."
 
         await update.message.reply_text(analytics_text, parse_mode='MarkdownV2')
         save_log("analytics", {
@@ -1589,7 +1607,8 @@ async def analytics(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "timestamp": datetime.now().isoformat()
         })
     except Exception as e:
-        await update.message.reply_text(f"❌ Error fetching analytics: {str(e)}", parse_mode='MarkdownV2')
+        error_msg = escape_markdown(str(e))
+        await update.message.reply_text(f"❌ Error fetching analytics: {error_msg}", parse_mode='MarkdownV2')
         save_log("errors", {
             "user_id": user_id,
             "error": f"Analytics failed: {str(e)}",
@@ -1597,7 +1616,6 @@ async def analytics(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "user_name": update.message.from_user.full_name,
             "user_username": update.message.from_user.username or 'N/A'
         })
-
 async def replyfeedback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.message.from_user.id
     if await check_blocked(user_id, update, context):
