@@ -638,10 +638,13 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.message.from_user.id
+    logger.info(f"Help command invoked by user {user_id}")
     if await check_blocked(user_id, update, context):
+        logger.warning(f"User {user_id} blocked from accessing /help")
         return
 
     if user_id == ADMIN_ID:
+        logger.info(f"Admin {user_id} accessing admin help menu")
         await update.message.reply_text(
             "📋 *Bot Commands by sniper* 📋\n\n"
             "🔐 /start - Request access\n"
@@ -670,6 +673,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             parse_mode='Markdown'
         )
     else:
+        logger.info(f"Non-admin user {user_id} accessing user help menu")
         await update.message.reply_text(
             "📋 *Bot Commands by sniper* 📋\n\n"
             "🔐 /start - Request access\n"
