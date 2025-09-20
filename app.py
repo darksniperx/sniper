@@ -737,7 +737,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
     else:
         help_text = (
-            f"🔍 *sniper's Bot Commands* 🔍\n\n"
+            f"🔍 *Sniper's Bot Commands* 🔍\n\n"
             f"\/start \\- Request access to the bot\n"
             f"\/help \\- Display this help menu\n"
             f"\/name \\<query\\> \\- Search by name\n"
@@ -758,7 +758,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "user_username": update.message.from_user.username or 'N/A',
             "timestamp": datetime.now().isoformat()
         })
-    except telegram.error.BadRequest as e:
+    except Exception as e:
         error_msg = escape_markdown(str(e))
         await update.message.reply_text(f"❌ Error displaying help menu: {error_msg}", parse_mode='MarkdownV2')
         save_log("errors", {
@@ -981,127 +981,108 @@ async def feedback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         save_log("errors", {"user_id": user_id, "error": f"Feedback command failed: {str(e)}"})
 
 async def perform_search(update: Update, context: ContextTypes.DEFAULT_TYPE, column: str):
-    global df
     user_id = update.message.from_user.id
-    username = update.message.from_user.username or 'N/A'
-    user_name = update.message.from_user.full_name
+    query = ' '.join(context.args).strip().lower()
+    if not query:
+        await update.message.reply_text(f"❌ Please provide a {column.lower()} to search\\.", parse_mode='MarkdownV2')
+        return
+
     if await check_blocked(user_id, update, context):
         return
 
-    authorized = load_authorized_users()
     access_count = load_access_count()
-    user_data = access_count.get(str(user_id), {'count': 0, 'total_limit': 1})
-    count = user_data['count']
-    total_limit = user_data['total_limit']
-    logger.info(f"Performing search for user {user_id} ({user_name} @{username}): count={count}, total_limit={total_limit}, column={column}")
-
-    if user_id != ADMIN_ID and user_id not in authorized:
-        await update.message.reply_text("🔒 You are not authorized. Use /start to request access.", parse_mode='Markdown')
-        return
+    user_data = access_count.get(str(user_id), {'count': 0, 'total_limit': 0})
+    count, total_limit = user_data['count'], user_data['total_limit']
+    logger.info(f"Performing search for user {user_id} ({update.message.from_user.full_name} @{update.message.from_user.username or 'N/A'}): count={count}, total_limit={total_limit}, column={column}")
 
     if user_id != ADMIN_ID and count >= total_limit:
-        await update.message.reply_text(
-            f"⚠️ Your search limit is reached. Current: count={count}, total_limit={total_limit}.\n\n"
-            "💌 *Create & Send Redeem Code!* 🔑✨\n\n"
-            "3 Searches → ₹50 💰\n"
-            "10 Searches → ₹100 💸\n"
-            "50 Searches → ₹200 💵\n"
-            "Full Database Access → ₹1000 🏆\n"
-            "Make a Bot Like Mine with Full Database → ₹1200 🤖⚡\n\n"
-            f"Contact {ADMIN_USERNAME} for more searches or to purchase.",
-            parse_mode='Markdown'
-        )
-        logger.warning(f"Search blocked for user {user_id}: count={count}, total_limit={total_limit}")
-        return
-
-    logger.info(f"DataFrame state before search: {len(df)} rows, columns: {list(df.columns) if not df.empty else 'None'}")
-    
-    if df.empty:
-        logger.info(f"DataFrame is empty when searching for column {column}. Reloading data...")
-        df = load_all_excels()
-        logger.info(f"DataFrame state after reload: {len(df)} rows, columns: {list(df.columns) if not df.empty else 'None'}")
-        if df.empty:
-            logger.warning("DataFrame still empty after reload")
-            await update.message.reply_text(f"❗ No Excel data loaded. Contact {ADMIN_USERNAME} to upload Excel files.", parse_mode='Markdown')
-            return
-
-    if not context.args:
-        await update.message.reply_text(f"Usage: /{column.lower()} <query>", parse_mode='Markdown')
+        await update.message.reply_text("❌ You have reached your search limit\\.", parse_mode='MarkdownV2')
         return
 
     try:
-        query = " ".join(context.args).strip().lower()
+        df = load_dataframe()
+        logger.info(f"DataFrame state before search: {df.shape[0]} rows, columns: {list(df.columns)}")
+        matches = df[df[column].str.lower().str.contains(query, na=False)]
         logger.info(f"Searching for query '{query}' in column '{column}' by user {user_id}")
-        if column not in df.columns:
-            logger.warning(f"Column '{column}' not found in DataFrame. Available columns: {list(df.columns)}")
-            await update.message.reply_text(f"❌ Column '{column}' not found in Excel data. Available columns: {', '.join(df.columns)}", parse_mode='Markdown')
-            return
 
-        matches = df[df[column].fillna('').astype(str).str.lower().str.contains(query, na=False)]
-        logger.info(f"Found {len(matches)} matches for query '{query}' in column '{column}'")
+        def escape_markdown(text: str) -> str:
+            """Escape all special characters for MarkdownV2."""
+            if not text:
+                return 'N/A'
+            special_chars = ['_', '*', '[', ']', '(', ')', '~', '`', '>', '#', '+', '-', '=', '|', '{', '}', '.', '!']
+            for char in special_chars:
+                text = text.replace(char, f'\\{char}')
+            return text
 
         if matches.empty:
-            await update.message.reply_text("❌ No matching records found.", parse_mode='Markdown')
-            await notify_admin_search(context, user_id, username, query, column, None)
+            await update.message.reply_text(f"❌ No matches found for '{escape_markdown(query)}' in {column}\\", parse_mode='MarkdownV2')
+            logger.info(f"Found 0 matches for query '{query}' in column '{column}'")
             save_log("searches", {
                 "user_id": user_id,
-                "user_name": user_name,
-                "user_username": username,
+                "user_name": update.message.from_user.full_name,
+                "user_username": update.message.from_user.username or 'N/A',
                 "query": query,
                 "column": column,
                 "result_count": 0,
                 "student_name": "No match",
                 "timestamp": datetime.now().isoformat()
             })
+            await context.bot.send_message(
+                chat_id=ADMIN_ID,
+                text=f"🔔 *User Search*:\n{escape_markdown(update.message.from_user.full_name)} \\(@{escape_markdown(update.message.from_user.username or 'N/A')}, ID: {user_id}\\) searched for '{escape_markdown(query)}' in {column} \\(0 results\\)",
+                parse_mode='MarkdownV2'
+            )
             return
 
-        context.user_data['search_results'] = matches.to_dict(orient='records')
-        context.user_data['search_query'] = query
-        context.user_data['search_column'] = column
-        context.user_data['current_page'] = 0
-        context.user_data['results_per_page'] = 10
+        result_count = len(matches)
+        logger.info(f"Found {result_count} matches for query '{query}' in column '{column}'")
+        results_per_page = 10
+        total_pages = (result_count + results_per_page - 1) // results_per_page
+        page = 1
+        start_idx = (page - 1) * results_per_page
+        end_idx = min(start_idx + results_per_page, result_count)
+        logger.info(f"Sending paginated results: page {page}/{total_pages}, showing {start_idx + 1}-{end_idx}")
 
-        if user_id != ADMIN_ID and len(matches) == 1:
-            if not save_access_count(user_id, count + 1, total_limit):
-                await update.message.reply_text("❌ Error updating search count. Please try again.", parse_mode='Markdown')
-                return
-            logger.info(f"Incremented search count for user {user_id} to {count + 1}/{total_limit} for single result")
+        result_text = f"🔍 *Search Results for '{escape_markdown(query)}' in {column}* \\({result_count} matches\\):\n\n"
+        for idx, row in matches.iloc[start_idx:end_idx].iterrows():
+            name = escape_markdown(str(row.get('Name', 'N/A')))
+            admission_no = escape_markdown(str(row.get('Admission No.', 'N/A')))
+            course = escape_markdown(str(row.get('Course', 'N/A')))
+            result_text += (
+                f"👤 *Name*: {name}\n"
+                f"🎓 *Admission No.*: {admission_no}\n"
+                f"📚 *Course*: {course}\n\n"
+            )
 
-        if len(matches) == 1:
-            record = matches.iloc[0].to_dict()
-            formatted_sections = format_student_record(record)
-            for section in formatted_sections:
-                await update.message.reply_text(section, parse_mode='Markdown')
-            await notify_admin_search(context, user_id, username, query, column, record, is_full_record=True)
-            save_log("searches", {
-                "user_id": user_id,
-                "user_name": user_name,
-                "user_username": username,
-                "query": query,
-                "column": column,
-                "student_name": record.get('Name', 'Unknown'),
-                "result_count": len(matches),
-                "timestamp": datetime.now().isoformat()
-            })
-        else:
-            await send_paginated_results(update, context)
-            await notify_admin_search(context, user_id, username, query, column, None)
-            save_log("searches", {
-                "user_id": user_id,
-                "user_name": user_name,
-                "user_username": username,
-                "query": query,
-                "column": column,
-                "student_name": "Multiple matches",
-                "result_count": len(matches),
-                "timestamp": datetime.now().isoformat()
-            })
-            return
+        if result_count > results_per_page:
+            result_text += f"📄 Showing {start_idx + 1}-{end_idx} of {result_count} results\\. Reply with 'Page X' to see more\\."
 
+        await update.message.reply_text(result_text, parse_mode='MarkdownV2')
+        save_log("searches", {
+            "user_id": user_id,
+            "user_name": update.message.from_user.full_name,
+            "user_username": update.message.from_user.username or 'N/A',
+            "query": query,
+            "column": column,
+            "student_name": "Multiple matches" if result_count > 1 else matches.iloc[0]['Name'],
+            "result_count": result_count,
+            "timestamp": datetime.now().isoformat()
+        })
+        await context.bot.send_message(
+            chat_id=ADMIN_ID,
+            text=f"🔔 *User Search*:\n{escape_markdown(update.message.from_user.full_name)} \\(@{escape_markdown(update.message.from_user.username or 'N/A')}, ID: {user_id}\\) searched for '{escape_markdown(query)}' in {column} \\({result_count} results\\)",
+            parse_mode='MarkdownV2'
+        )
     except Exception as e:
-        logger.error(f"Error in search for user {user_id}: {str(e)}")
-        await update.message.reply_text(f"❌ Search failed: {str(e)}", parse_mode='Markdown')
-        save_log("errors", {"user_id": user_id, "error": f"Search failed: {str(e)}"})
+        error_msg = escape_markdown(str(e))
+        await update.message.reply_text(f"❌ Error performing search: {error_msg}", parse_mode='MarkdownV2')
+        save_log("errors", {
+            "user_id": user_id,
+            "error": f"Search failed: {str(e)}",
+            "timestamp": datetime.now().isoformat(),
+            "user_name": update.message.from_user.full_name,
+            "user_username": update.message.from_user.username or 'N/A'
+        })
 
 async def send_paginated_results(update: Update, context: ContextTypes.DEFAULT_TYPE):
     results = context.user_data.get('search_results', [])
@@ -1337,30 +1318,77 @@ async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if await check_blocked(user_id, update, context):
         return
     if user_id != ADMIN_ID:
-        await update.message.reply_text("❌ Only admin can broadcast.", parse_mode='Markdown')
+        await update.message.reply_text("❌ Only admin can broadcast messages\\.", parse_mode='MarkdownV2')
         return
 
-    if not context.args:
-        await update.message.reply_text("Usage: /broadcast <message>", parse_mode='Markdown')
+    msg = ' '.join(context.args)
+    if not msg:
+        await update.message.reply_text("❌ Please provide a message to broadcast\\.", parse_mode='MarkdownV2')
         return
 
-    msg = " ".join(context.args)
-    authorized = load_authorized_users()
-    total_sent = 0
+    def escape_markdown(text: str) -> str:
+        """Escape all special characters for MarkdownV2."""
+        if not text:
+            return 'N/A'
+        special_chars = ['_', '*', '[', ']', '(', ')', '~', '`', '>', '#', '+', '-', '=', '|', '{', '}', '.', '!']
+        for char in special_chars:
+            text = text.replace(char, f'\\{char}')
+        return text
 
-    for uid in authorized:
-        for attempt in range(3):
+    try:
+        authorized = load_authorized_users()
+        failed_users = []
+        for uid in authorized:
             try:
-                await context.bot.send_message(chat_id=uid, text=f"📢 Broadcast from {ADMIN_USERNAME}:\n\n{msg}", parse_mode='Markdown')
-                total_sent += 1
-                break
-            except telegram.error.BadRequest as e:
-                logger.error(f"Broadcast error to {uid}, attempt {attempt + 1}: {e}")
-                if attempt == 2:
-                    save_log("errors", {"user_id": uid, "error": f"Broadcast failed: {str(e)}"})
-                await asyncio.sleep(1)
+                await context.bot.send_message(
+                    chat_id=uid,
+                    text=f"📢 Broadcast from {escape_markdown(ADMIN_USERNAME)}:\n\n{escape_markdown(msg)}",
+                    parse_mode='MarkdownV2'
+                )
+            except telegram.error.Forbidden:
+                logger.warning(f"Failed to send broadcast to user {uid}: Bot is blocked")
+                failed_users.append(uid)
+                save_log("errors", {
+                    "user_id": user_id,
+                    "error": f"Failed to broadcast to user {uid}: Bot is blocked",
+                    "timestamp": datetime.now().isoformat(),
+                    "user_name": update.message.from_user.full_name,
+                    "user_username": update.message.from_user.username or 'N/A'
+                })
+            except Exception as e:
+                logger.error(f"Failed to send broadcast to user {uid}: {str(e)}")
+                failed_users.append(uid)
+                save_log("errors", {
+                    "user_id": user_id,
+                    "error": f"Failed to broadcast to user {uid}: {str(e)}",
+                    "timestamp": datetime.now().isoformat(),
+                    "user_name": update.message.from_user.full_name,
+                    "user_username": update.message.from_user.username or 'N/A'
+                })
 
-    await update.message.reply_text(f"Broadcast sent to {total_sent} users.", parse_mode='Markdown')
+        success_count = len(authorized) - len(failed_users)
+        await update.message.reply_text(
+            f"✅ Broadcast sent to {success_count}/{len(authorized)} users\\.\n"
+            f"{'Failed users: ' + ', '.join(map(str, failed_users)) if failed_users else 'No failures\\.'}",
+            parse_mode='MarkdownV2'
+        )
+        save_log("broadcast", {
+            "admin_id": user_id,
+            "message": msg,
+            "success_count": success_count,
+            "failed_users": failed_users,
+            "timestamp": datetime.now().isoformat()
+        })
+    except Exception as e:
+        error_msg = escape_markdown(str(e))
+        await update.message.reply_text(f"❌ Error broadcasting message: {error_msg}", parse_mode='MarkdownV2')
+        save_log("errors", {
+            "user_id": user_id,
+            "error": f"Broadcast failed: {str(e)}",
+            "timestamp": datetime.now().isoformat(),
+            "user_name": update.message.from_user.full_name,
+            "user_username": update.message.from_user.username or 'N/A'
+        })
 
 async def addaccess(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.message.from_user.id
@@ -1554,6 +1582,15 @@ async def analytics(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ Only admin can view analytics\\.", parse_mode='MarkdownV2')
         return
 
+    def escape_markdown(text: str) -> str:
+        """Escape all special characters for MarkdownV2."""
+        if not text:
+            return 'N/A'
+        special_chars = ['_', '*', '[', ']', '(', ')', '~', '`', '>', '#', '+', '-', '=', '|', '{', '}', '.', '!']
+        for char in special_chars:
+            text = text.replace(char, f'\\{char}')
+        return text
+
     try:
         access_count = load_access_count()
         authorized = load_authorized_users()
@@ -1562,19 +1599,10 @@ async def analytics(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         total_users = len(authorized)
         total_searches = sum(data['count'] for data in access_count.values())
-        search_logs = [log for log in logs if log['type'] == 'searches']
-        total_salary_downloads = len([log for log in logs if log['type'] == 'salary_downloads'])
-        total_batch_downloads = len([log for log in logs if log['type'] == 'batch_downloads'])
+        search_logs = [log for log in logs if log.get('type') == 'searches']  # Use get() to avoid KeyError
+        total_salary_downloads = len([log for log in logs if log.get('type') == 'salary_downloads'])
+        total_batch_downloads = len([log for log in logs if log.get('type') == 'batch_downloads'])
         total_feedback = len(feedback)
-
-        def escape_markdown(text: str) -> str:
-            """Escape all special characters for MarkdownV2."""
-            if not text:
-                return 'N/A'
-            special_chars = ['_', '*', '[', ']', '(', ')', '~', '`', '>', '#', '+', '-', '=', '|', '{', '}', '.', '!']
-            for char in special_chars:
-                text = text.replace(char, f'\\{char}')
-            return text
 
         user_stats = []
         for uid, data in access_count.items():
