@@ -694,80 +694,70 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.message.from_user.id
     logger.info(f"Help command invoked by user {user_id}")
     if await check_blocked(user_id, update, context):
-        logger.warning(f"User {user_id} blocked from accessing /help")
         return
 
-    help_text = (
-        "📋 *Bot Commands by sniper* 📋\n\n"
-        "🔐 /start - Request access\n"
-        "🔍 /name <query> - Search by name\n"
-        "📧 /email <query> - Search by email\n"
-        "📱 /phone <query> - Search by phone\n"
-        "📄 /downloadone <id> (8000-9600) - Download salary slip (unlimited) 💥\n"
-        "📊 /profile - View usage stats\n"
-        "📝 /feedback <message> - Send feedback\n"
-        "ℹ️ /help - Show this message\n\n"
-        f"🤖 *Coded by {ADMIN_USERNAME}* 🔥"
-    )
     if user_id == ADMIN_ID:
         logger.info(f"Admin {user_id} accessing admin help menu")
         help_text = (
-            "📋 *Bot Commands by sniper* 📋\n\n"
-            "🔐 /start - Request access\n"
-            "🔍 /name <query> - Search by name\n"
-            "📧 /email <query> - Search by email\n"
-            "📱 /phone <query> - Search by phone\n"
-            "📄 /downloadone <id> - Download single salary slip\n"
-            "📥 /downloadall <start> <end> - Download multiple slips (admin only)\n"
-            "📄 /listexcel - List available Excel files (admin)\n"
-            "🔄 /reload - Reload all Excel data (admin)\n"
-            "📊 /profile - Your usage stats\n"
-            "👤 /userinfo <user_id> - View user info (admin)\n"
-            "📝 /feedback <message> - Send feedback\n"
-            "📢 /broadcast <msg> - Admin-only broadcast\n"
-            "➕ /addaccess <user_id> <count> - Admin adds access count\n"
-            "🚫 /block <user_id> - Admin blocks user\n"
-            "✅ /unblock <user_id> - Admin unblocks user\n"
-            "📜 /logs - View recent logs with user details (admin)\n"
-            "📊 /analytics - View bot stats with per-user searches (admin)\n"
-            "📩 /replyfeedback <user_id> <msg> - Reply to feedback (admin)\n"
-            "📤 /exportusers - Export authorized users (admin)\n"
-            "🏥 /health - Check bot health (admin)\n"
-            "📢 /sharecommands - Share command list to all users (admin)\n"
-            "ℹ️ /help - Show this message\n\n"
-            f"🤖 *Coded by {ADMIN_USERNAME}* 🔥"
+            "🔐 *Admin Commands* 🔐\n\n"
+            "\/start \\- Request access to the bot\n"
+            "\/help \\- Display this help menu\n"
+            "\/name \\<query\\> \\- Search by name\n"
+            "\/email \\<query\\> \\- Search by email\n"
+            "\/phone \\<query\\> \\- Search by phone\n"
+            "\/downloadone \\<id\\> \\- Download salary slip \\(8000\\-9600, unlimited for admin\\)\n"
+            "\/downloadall \\- Download all salary slips \\(admin only\\)\n"
+            "\/listexcel \\- List available Excel files\n"
+            "\/reload \\- Reload Excel data\n"
+            "\/profile \\- View your usage stats\n"
+            "\/userinfo \\<user_id\\> \\- View user details\n"
+            "\/feedback \\<message\\> \\- Submit feedback\n"
+            "\/broadcast \\<message\\> \\- Send message to all users\n"
+            "\/addaccess \\<user_id\\> \\<limit\\> \\- Grant user access\n"
+            "\/block \\<user_id\\> \\- Block a user\n"
+            "\/unblock \\<user_id\\> \\- Unblock a user\n"
+            "\/logs \\<limit\\> \\- View recent logs\n"
+            "\/analytics \\- View bot analytics\n"
+            "\/replyfeedback \\<user_id\\> \\<message\\> \\- Reply to feedback\n"
+            "\/exportusers \\- Export authorized users\n"
+            "\/health \\- Check bot health\n"
+            "\/sharecommands \\- Share public commands\n\n"
+            f"🤖 *Powered by* \\{ADMIN_USERNAME}\\!"
+        )
+    else:
+        help_text = (
+            "🔍 *sniper's Bot Commands* 🔍\n\n"
+            "\/start \\- Request access to the bot\n"
+            "\/help \\- Display this help menu\n"
+            "\/name \\<query\\> \\- Search by name\n"
+            "\/email \\<query\\> \\- Search by email\n"
+            "\/phone \\<query\\> \\- Search by phone\n"
+            "\/downloadone \\<id\\> \\- Download salary slip \\(8000\\-9600, unlimited\\)\n"
+            "\/profile \\- View your usage stats\n"
+            "\/feedback \\<message\\> \\- Submit feedback\n\n"
+            f"🤖 *Powered by* \\{ADMIN_USERNAME}\\!"
         )
 
-    for attempt in range(3):
-        try:
-            await update.message.reply_text(help_text, parse_mode='Markdown')
-            logger.info(f"Help command executed for user {user_id}")
-            save_log("help_command", {
-                "user_id": user_id,
-                "user_name": update.message.from_user.full_name,
-                "user_username": update.message.from_user.username or 'N/A',
-                "timestamp": datetime.now().isoformat()
-            })
-            return
-        except telegram.error.BadRequest as e:
-            logger.error(f"Error sending help message to user {user_id}, attempt {attempt + 1}: {e}")
-            if attempt == 2:
-                await update.message.reply_text(f"❌ Failed to display help. Contact {ADMIN_USERNAME}.", parse_mode='Markdown')
-                save_log("errors", {
-                    "user_id": user_id,
-                    "error": f"Failed to send help message: {str(e)}",
-                    "timestamp": datetime.now().isoformat()
-                })
-            await asyncio.sleep(1)
-        except Exception as e:
-            logger.error(f"Unexpected error in help command for user {user_id}: {str(e)}")
-            await update.message.reply_text(f"❌ Error displaying help. Contact {ADMIN_USERNAME}.", parse_mode='Markdown')
-            save_log("errors", {
-                "user_id": user_id,
-                "error": f"Help command failed: {str(e)}",
-                "timestamp": datetime.now().isoformat()
-            })
-            return
+    try:
+        await update.message.reply_text(help_text, parse_mode='MarkdownV2')
+        logger.info(f"Help command executed for user {user_id}")
+        save_log("help_command", {
+            "user_id": user_id,
+            "user_name": update.message.from_user.full_name,
+            "user_username": update.message.from_user.username or 'N/A',
+            "timestamp": datetime.now().isoformat()
+        })
+    except telegram.error.BadRequest as e:
+        logger.error(f"Error sending help message to user {user_id}, attempt 1: {str(e)}")
+        # Fallback to plain text
+        await update.message.reply_text("❌ Error displaying help menu. Contact @Darksniperrx.")
+        save_log("errors", {
+            "user_id": user_id,
+            "error": f"Failed to send help message: {str(e)}",
+            "timestamp": datetime.now().isoformat(),
+            "user_name": update.message.from_user.full_name,
+            "user_username": update.message.from_user.username or 'N/A'
+        })
 
 async def sharecommands(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.message.from_user.id
@@ -834,14 +824,34 @@ async def listexcel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if await check_blocked(user_id, update, context):
         return
     if user_id != ADMIN_ID:
-        await update.message.reply_text("❌ Only admin can list Excel files.", parse_mode='Markdown')
+        await update.message.reply_text("❌ Only admin can list Excel files.", parse_mode='MarkdownV2')
         return
-    excel_files = get_excel_files()
-    if not excel_files:
-        await update.message.reply_text("❌ No Excel files found.", parse_mode='Markdown')
-        return
-    files_list = "\n".join([f"- {f}" for f in excel_files])
-    await update.message.reply_text(f"📄 Available Excel files:\n{files_list}", parse_mode='Markdown')
+
+    try:
+        excel_files = get_excel_files()
+        if not excel_files:
+            await update.message.reply_text("📂 No Excel files found.", parse_mode='MarkdownV2')
+            return
+
+        def escape_markdown(text: str) -> str:
+            """Escape special characters for MarkdownV2."""
+            special_chars = ['_', '*', '[', ']', '(', ')', '~', '`', '>', '#', '+', '-', '=', '|', '{', '}', '.', '!']
+            for char in special_chars:
+                text = text.replace(char, f'\\{char}')
+            return text
+
+        files_list = "\n".join([f"\\- {escape_markdown(f)}" for f in excel_files])
+        await update.message.reply_text(f"📄 *Available Excel Files*:\n{files_list}", parse_mode='MarkdownV2')
+        logger.info(f"Found {len(excel_files)} Excel files in GridFS: {excel_files}")
+    except Exception as e:
+        await update.message.reply_text(f"❌ Error listing Excel files: {str(e)}", parse_mode='MarkdownV2')
+        save_log("errors", {
+            "user_id": user_id,
+            "error": f"Listexcel failed: {str(e)}",
+            "timestamp": datetime.now().isoformat(),
+            "user_name": update.message.from_user.full_name,
+            "user_username": update.message.from_user.username or 'N/A'
+        })
 
 async def reload(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.message.from_user.id
@@ -1474,82 +1484,58 @@ async def logs(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if await check_blocked(user_id, update, context):
         return
     if user_id != ADMIN_ID:
-        await update.message.reply_text("❌ Only admin can view logs.", parse_mode='Markdown')
+        await update.message.reply_text("❌ Only admin can view logs.", parse_mode='MarkdownV2')
         return
 
-    logs = load_logs()
-    if not logs:
-        await update.message.reply_text("📜 No logs found.", parse_mode='Markdown')
-        return
+    try:
+        limit = int(context.args[0]) if context.args else 10
+        if limit > 100:
+            limit = 100
+        logs = load_logs(limit)
+        logger.info(f"Loaded recent logs: {len(logs)} entries")
 
-    log_text = "📜 *Recent Logs* (Last 100):\n\n"
-    for log in logs:
-        log_data = log['data']
-        log_type = log['type']
-        timestamp = log.get('readable_timestamp', log['timestamp'])
-        user_name = log_data.get('user_name', 'N/A')
-        user_username = log_data.get('user_username', 'N/A')
-        user_id = log_data.get('user_id', 'N/A')
-        action = log_data.get('action', 'N/A')
-        if log_type == "searches":
-            query = log_data.get('query', 'N/A')
-            column = log_data.get('column', 'N/A')
-            result_count = log_data.get('result_count', 0)
-            student_name = log_data.get('student_name', 'N/A')
-            log_text += (
-                f"[{timestamp}] 🔍 Search by {user_name} (@{user_username}, ID: {user_id})\n"
-                f"Query: {query} (in {column}), Results: {result_count}, Student: {student_name}\n\n"
-            )
-        elif log_type == "salary_downloads":
-            emp_id = log_data.get('emp_id', 'N/A')
-            filename = log_data.get('filename', 'N/A')
-            log_text += (
-                f"[{timestamp}] 📄 Salary Slip Download by {user_name} (@{user_username}, ID: {user_id})\n"
-                f"Employee ID: {emp_id}, File: {filename}\n\n"
-            )
-        elif log_type == "batch_downloads":
-            start_id = log_data.get('start_id', 'N/A')
-            end_id = log_data.get('end_id', 'N/A')
-            successful = log_data.get('successful', 0)
-            log_text += (
-                f"[{timestamp}] 📥 Batch Download by Admin (ID: {user_id})\n"
-                f"Range: {start_id}-{end_id}, Successful: {successful}\n\n"
-            )
-        elif log_type == "access_requests":
-            log_text += (
-                f"[{timestamp}] 🔐 Access Request by {user_name} (@{user_username}, ID: {user_id})\n\n"
-            )
-        elif log_type == "errors":
-            error = log_data.get('error', 'N/A')
-            log_text += (
-                f"[{timestamp}] ⚠️ Error for User ID: {user_id}\n"
-                f"Details: {error}\n\n"
-            )
-        elif log_type == "broadcast_commands":
-            total_sent = log_data.get('total_sent', 0)
-            failed_users = log_data.get('failed_users', [])
-            log_text += (
-                f"[{timestamp}] 📢 Command List Broadcast by Admin (ID: {user_id})\n"
-                f"Sent to: {total_sent} users, Failed: {len(failed_users)}\n\n"
-            )
-        elif log_type == "online_broadcast":
-            total_sent = log_data.get('total_sent', 0)
-            failed_users = log_data.get('failed_users', [])
-            log_text += (
-                f"[{timestamp}] 🚀 Online Status Broadcast\n"
-                f"Sent to: {total_sent} users, Failed: {len(failed_users)}\n\n"
-            )
-        else:
-            log_text += f"[{timestamp}] {log_type}: {action}\n\n"
+        def escape_markdown(text: str) -> str:
+            """Escape special characters for MarkdownV2."""
+            special_chars = ['_', '*', '[', ']', '(', ')', '~', '`', '>', '#', '+', '-', '=', '|', '{', '}', '.', '!']
+            for char in special_chars:
+                text = text.replace(char, f'\\{char}')
+            return text
 
-    await update.message.reply_text(log_text, parse_mode='Markdown')
+        log_text = f"📜 *Recent Logs \\(Last {len(logs)}\\)* 📜\n\n"
+        for log in logs:
+            timestamp = log.get('timestamp', 'N/A')
+            log_type = log.get('type', 'N/A')
+            details = log.get('details', {})
+            user_id_log = details.get('user_id', 'N/A')
+            user_name = escape_markdown(details.get('user_name', 'N/A'))
+            user_username = escape_markdown(details.get('user_username', 'N/A'))
+            log_text += (
+                f"⏰ *Time*: {escape_markdown(timestamp)}\n"
+                f"📋 *Type*: {escape_markdown(log_type)}\n"
+                f"👤 *User*: {user_name} \\(@{user_username}, ID: {user_id_log}\\)\n"
+                f"🔍 *Details*: {escape_markdown(str(details))}\n\n"
+            )
+            if len(log_text) > 3500:  # Avoid Telegram message length limit
+                log_text += f"⚠️ *Truncated*: Showing {len(logs)} of {limit} logs due to length."
+                break
+
+        await update.message.reply_text(log_text, parse_mode='MarkdownV2')
+    except Exception as e:
+        await update.message.reply_text(f"❌ Error fetching logs: {str(e)}", parse_mode='MarkdownV2')
+        save_log("errors", {
+            "user_id": user_id,
+            "error": f"Logs failed: {str(e)}",
+            "timestamp": datetime.now().isoformat(),
+            "user_name": update.message.from_user.full_name,
+            "user_username": update.message.from_user.username or 'N/A'
+        })
 
 async def analytics(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.message.from_user.id
     if await check_blocked(user_id, update, context):
         return
     if user_id != ADMIN_ID:
-        await update.message.reply_text("❌ Only admin can view analytics.", parse_mode='Markdown')
+        await update.message.reply_text("❌ Only admin can view analytics.", parse_mode='MarkdownV2')
         return
 
     try:
@@ -1565,12 +1551,19 @@ async def analytics(update: Update, context: ContextTypes.DEFAULT_TYPE):
         total_batch_downloads = len([log for log in logs if log['type'] == 'batch_downloads'])
         total_feedback = len(feedback)
 
+        def escape_markdown(text: str) -> str:
+            """Escape special characters for MarkdownV2."""
+            special_chars = ['_', '*', '[', ']', '(', ')', '~', '`', '>', '#', '+', '-', '=', '|', '{', '}', '.', '!']
+            for char in special_chars:
+                text = text.replace(char, f'\\{char}')
+            return text
+
         user_stats = []
         for uid, data in access_count.items():
             user_info = authorized.get(int(uid), {'name': 'N/A', 'username': 'N/A'})
             user_stats.append(
-                f"👤 {user_info['name']} (@{user_info['username']}, ID: {uid})\n"
-                f"🔎 Searches: {data['count']}/{data['total_limit']} (Remaining: {max(0, data['total_limit'] - data['count'])})\n"
+                f"👤 {escape_markdown(user_info['name'])} \\(@{escape_markdown(user_info['username'])}, ID: {uid}\\)\n"
+                f"🔎 Searches: {data['count']}\\/ {data['total_limit']} \\(Remaining: {max(0, data['total_limit'] - data['count'])}\\)\n"
             )
 
         analytics_text = (
@@ -1582,7 +1575,10 @@ async def analytics(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"📝 Total Feedback Entries: {total_feedback}\n\n"
             f"👤 *User Stats*:\n" + "\n".join(user_stats) if user_stats else "No user stats available."
         )
-        await update.message.reply_text(analytics_text, parse_mode='Markdown')
+        if len(analytics_text) > 3500:  # Avoid Telegram message length limit
+            analytics_text = analytics_text[:3500] + f"\n⚠️ *Truncated*: Showing partial stats due to length."
+
+        await update.message.reply_text(analytics_text, parse_mode='MarkdownV2')
         save_log("analytics", {
             "admin_id": user_id,
             "total_users": total_users,
@@ -1593,8 +1589,14 @@ async def analytics(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "timestamp": datetime.now().isoformat()
         })
     except Exception as e:
-        await update.message.reply_text(f"❌ Error fetching analytics: {str(e)}", parse_mode='Markdown')
-        save_log("errors", {"user_id": user_id, "error": f"Analytics failed: {str(e)}"})
+        await update.message.reply_text(f"❌ Error fetching analytics: {str(e)}", parse_mode='MarkdownV2')
+        save_log("errors", {
+            "user_id": user_id,
+            "error": f"Analytics failed: {str(e)}",
+            "timestamp": datetime.now().isoformat(),
+            "user_name": update.message.from_user.full_name,
+            "user_username": update.message.from_user.username or 'N/A'
+        })
 
 async def replyfeedback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.message.from_user.id
