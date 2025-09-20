@@ -245,7 +245,7 @@ async def notify_admin_search(context, user_id, username, query, column, student
     else:
         message = (
             f"🔍 *Search Alert:*\n"
-            f"�ID User ID: {user_id}\n"
+            f"🆔 User ID: {user_id}\n"
             f"👤 User: {username or 'N/A'}\n"
             f"🔍 Query: {query} (in {column})\n"
             f"⏰ Timestamp: {datetime.now().isoformat()}"
@@ -545,1380 +545,6 @@ async def broadcast_online_status(application):
                     parse_mode='Markdown'
                 )
                 total_sent += 1
-                break
-            except telegram.error.BadRequest as e:
-                logger.error(f"Error sending online status to {uid}, attempt {attempt + 1}: {e}")
-                if attempt == 2:
-                    failed_users.append(uid)
-                    save_log("errors", {
-                        "user_id": uid,
-                        "error": f"Failed to send online status: {str(e)}",
-                        "timestamp": datetime.now().isoformat()
-                    })
-                await asyncio.sleep(1)
-
-    logger.info(f"Online status broadcast sent to {total_sent} users. Failed: {len(failed_users)}")
-    save_log("online_broadcast", {
-        "total_sent": total_sent,
-        "failed_users": failed_users,
-        "timestamp": datetime.now().isoformat()
-    })
-
-# ---------- Bot Commands -------------
-async def check_blocked(user_id, update, context):
-    if user_id == ADMIN_ID:
-        logger.info(f"Admin {user_id} bypassed block check")
-        return False
-    blocked = load_blocked_users()
-    if user_id in blocked:
-        await update.message.reply_text("❌ You are blocked from using this bot.")
-        logger.warning(f"Blocked user {user_id} attempted to use command")
-        return True
-    return False
-
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = update.effective_user
-    user_id = user.id
-    user_list.add(user_id)
-    if await check_blocked(user_id, update, context):
-        return
-
-    authorized = load_authorized_users()
-    if user_id in authorized or user_id == ADMIN_ID:
-        await update.message.reply_text(
-            f"🔥 Welcome to sniper's Bot! 🔥\n\n"
-            f"✅ You already have access.\n\n"
-            "📋 Commands:\n"
-            f"🔍 /name <query> - Search by name\n"
-            f"📧 /email <query> - Search by email\n"
-            f"📱 /phone <query> - Search by phone\n"
-            f"📄 /downloadone <id> - Download salary slip (8000-9600, unlimited for users)\n"
-            f"📊 /profile - View usage stats\n"
-            f"📝 /feedback <message> - Send feedback\n"
-            f"ℹ️ /help - Show commands\n\n"
-            f"🤖 *Contact {ADMIN_USERNAME} for support*"
-        )
-        save_authorized_user(user_id, user.full_name, user.username or 'N/A')
-    else:
-        try:
-            await update.message.reply_text("🔥 Welcome to sniper's Bot! 🔥\n\n🔐 Access request sent to admin. Please wait for approval.")
-            keyboard = InlineKeyboardMarkup([[
-                InlineKeyboardButton("✅ Approve", callback_data=f"approve_{user_id}"),
-                InlineKeyboardButton("❌ Reject", callback_data=f"reject_{user_id}")
-            ]])
-            msg = (
-                f"🔐 New Access Request:\n"
-                f"👤 Name: {user.full_name}\n"
-                f"🔗 Username: @{user.username or 'N/A'}\n"
-                f"🆔 ID: {user_id}"
-            )
-            for attempt in range(3):
-                try:
-                    await context.bot.send_message(chat_id=ADMIN_ID, text=msg, reply_markup=keyboard)
-                    save_log("access_requests", {
-                        "user_id": user_id,
-                        "name": user.full_name,
-                        "username": user.username or 'N/A',
-                        "timestamp": update.message.date.isoformat()
-                    })
-                    break
-                except telegram.error.BadRequest as e:
-                    logger.error(f"Error sending access request to admin {ADMIN_ID}, attempt {attempt + 1}: {e}")
-                    if attempt == 2:
-                        await update.message.reply_text(f"⚠️ Failed to send access request to admin. Contact {ADMIN_USERNAME}.")
-                        save_log("errors", {"user_id": user_id, "error": f"Failed to send access request: {str(e)}"})
-                        return
-                    await asyncio.sleep(1)
-        except Exception as e:
-            logger.error(f"Error in start command for user {user_id}: {str(e)}")
-            await update.message.reply_text(f"❌ An error occurred. Contact {ADMIN_USERNAME}.")
-            save_log("errors", {"user_id": user_id, "error": f"Start command failed: {str(e)}"})
-
-async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.message.from_user.id
-    logger.info(f"Help command invoked by user {user_id}")
-    if await check_blocked(user_id, update, context):
-        logger.warning(f"User {user_id} blocked from accessing /help")
-        return
-
-    help_text = (
-        "📋 *Bot Commands by sniper* 📋\n\n"
-        "🔐 /start - Request access\n"
-        "🔍 /name <query> - Search by name\n"
-        "📧 /email <query> - Search by email\n"
-        "📱 /phone <query> - Search by phone\n"
-        "📄 /downloadone <id> (8000-9600) - Download salary slip (unlimited) 💥\n"
-        "📊 /profile - View usage stats\n"
-        "📝 /feedback <message> - Send feedback\n"
-        "ℹ️ /help - Show this message\n\n"
-        f"🤖 *Coded by {ADMIN_USERNAME}* 🔥"
-    )
-    if user_id == ADMIN_ID:
-        logger.info(f"Admin {user_id} accessing admin help menu")
-        help_text = (
-            "📋 *Bot Commands by sniper* 📋\n\n"
-            "🔐 /start - Request access\n"
-            "🔍 /name <query> - Search by name\n"
-            "📧 /email <query> - Search by email\n"
-            "📱 /phone <query> - Search by phone\n"
-            "📄 /downloadone <id> - Download single salary slip\n"
-            "📥 /downloadall <start> <end> - Download multiple slips (admin only)\n"
-            "📄 /listexcel - List available Excel files (admin)\n"
-            "🔄 /reload - Reload all Excel data (admin)\n"
-            "📊 /profile - Your usage stats\n"
-            "👤 /userinfo <user_id> - View user info (admin)\n"
-            "📝 /feedback <message> - Send feedback\n"
-            "📢 /broadcast <msg> - Admin-only broadcast\n"
-            "➕ /addaccess <user_id> <count> - Admin adds access count\n"
-            "🚫 /block <user_id> - Admin blocks user\n"
-            "✅ /unblock <user_id> - Admin unblocks user\n"
-            "📜 /logs - View recent logs with user details (admin)\n"
-            "📊 /analytics - View bot stats with per-user searches (admin)\n"
-            "📩 /replyfeedback <user_id> <msg> - Reply to feedback (admin)\n"
-            "📤 /exportusers - Export authorized users (admin)\n"
-            "🏥 /health - Check bot health (admin)\n"
-            "📢 /sharecommands - Share command list to all users (admin)\n"
-            "ℹ️ /help - Show this message\n\n"
-            f"🤖 *Coded by {ADMIN_USERNAME}* 🔥"
-        )
-
-    for attempt in range(3):
-        try:
-            await update.message.reply_text(help_text, parse_mode='Markdown')
-            logger.info(f"Help command executed for user {user_id}")
-            save_log("help_command", {
-                "user_id": user_id,
-                "user_name": update.message.from_user.full_name,
-                "user_username": update.message.from_user.username or 'N/A',
-                "timestamp": datetime.now().isoformat()
-            })
-            return
-        except telegram.error.BadRequest as e:
-            logger.error(f"Error sending help message to user {user_id}, attempt {attempt + 1}: {e}")
-            if attempt == 2:
-                await update.message.reply_text(f"❌ Failed to display help. Contact {ADMIN_USERNAME}.")
-                save_log("errors", {
-                    "user_id": user_id,
-                    "error": f"Failed to send help message: {str(e)}",
-                    "timestamp": datetime.now().isoformat()
-                })
-            await asyncio.sleep(1)
-        except Exception as e:
-            logger.error(f"Unexpected error in help command for user {user_id}: {str(e)}")
-            await update.message.reply_text(f"❌ Error displaying help. Contact {ADMIN_USERNAME}.")
-            save_log("errors", {
-                "user_id": user_id,
-                "error": f"Help command failed: {str(e)}",
-                "timestamp": datetime.now().isoformat()
-            })
-            return
-
-async def sharecommands(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.message.from_user.id
-    if await check_blocked(user_id, update, context):
-        return
-    if user_id != ADMIN_ID:
-        await update.message.reply_text("❌ Only admin can share commands.")
-        return
-
-    command_message = (
-        "🔥 *sniper's Bot Command List* 🔥\n\n"
-        "Welcome to the ultimate bot experience! 🚀\n"
-        "Here are your commands to unleash the power:\n\n"
-        "🔐 /start - Kickstart your journey with access request\n"
-        "🔍 /name <query> - Hunt down records by name\n"
-        "📧 /email <query> - Track records by email\n"
-        "📱 /phone <query> - Find records by phone number\n"
-        "📄 /downloadone <id> (8000-9600) - Grab a salary slip (unlimited uses!) 💥\n"
-        "📊 /profile - Check your usage stats like a pro\n"
-        "📝 /feedback <message> - Drop your thoughts to sniper\n"
-        "ℹ️ /help - Get this awesome command list again\n\n"
-        f"🤖 *Powered by {ADMIN_USERNAME}* - Stay sharp! 🦅"
-    )
-
-    authorized = load_authorized_users()
-    total_sent = 0
-    failed_users = []
-
-    for uid in authorized:
-        for attempt in range(3):
-            try:
-                await context.bot.send_message(
-                    chat_id=uid,
-                    text=command_message,
-                    parse_mode='Markdown'
-                )
-                total_sent += 1
-                break
-            except telegram.error.BadRequest as e:
-                logger.error(f"Error sending command list to {uid}, attempt {attempt + 1}: {e}")
-                if attempt == 2:
-                    failed_users.append(uid)
-                    save_log("errors", {
-                        "user_id": uid,
-                        "error": f"Failed to send command list: {str(e)}",
-                        "timestamp": datetime.now().isoformat()
-                    })
-                await asyncio.sleep(1)
-
-    await update.message.reply_text(
-        f"📢 Command list shared with {total_sent} users.\n"
-        f"{'⚠️ Failed to send to: ' + ', '.join(map(str, failed_users)) if failed_users else '✅ All successful!'}"
-    )
-    save_log("broadcast_commands", {
-        "admin_id": user_id,
-        "total_sent": total_sent,
-        "failed_users": failed_users,
-        "timestamp": datetime.now().isoformat()
-    })
-
-async def listexcel(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.message.from_user.id
-    if await check_blocked(user_id, update, context):
-        return
-    if user_id != ADMIN_ID:
-        await update.message.reply_text("❌ Only admin can list Excel files.")
-        return
-    excel_files = get_excel_files()
-    if not excel_files:
-        await update.message.reply_text("❌ No Excel files found.")
-        return
-    files_list = "\n".join([f"- {f}" for f in excel_files])
-    await update.message.reply_text(f"📄 Available Excel files:\n{files_list}")
-
-async def reload(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.message.from_user.id
-    if await check_blocked(user_id, update, context):
-        return
-    if user_id != ADMIN_ID:
-        await update.message.reply_text("❌ Only admin can reload data.")
-        return
-    global df
-    df = load_all_excels()
-    await update.message.reply_text(f"✅ Reloaded data from all Excel files. DataFrame has {len(df)} rows, columns: {list(df.columns) if not df.empty else 'None'}.")
-
-async def profile(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.message.from_user.id
-    if await check_blocked(user_id, update, context):
-        return
-    authorized = load_authorized_users()
-    if user_id not in authorized and user_id != ADMIN_ID:
-        await update.message.reply_text("🔒 You are not authorized. Use /start to request access.")
-        return
-    access_count = load_access_count()
-    user_data = access_count.get(str(user_id), {'count': 0, 'total_limit': 1})
-    count = user_data['count']
-    total_limit = user_data['total_limit']
-    remaining = "Unlimited" if user_id == ADMIN_ID else max(0, total_limit - count)
-    await update.message.reply_text(
-        f"👤 User ID: {user_id}\n"
-        f"🔎 Searches used: {count}\n"
-        f"📊 Total limit: {total_limit if user_id != ADMIN_ID else 'Unlimited'}\n"
-        f"📉 Remaining: {remaining}"
-    )
-
-async def userinfo(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.message.from_user.id
-    if await check_blocked(user_id, update, context):
-        return
-    if user_id != ADMIN_ID:
-        await update.message.reply_text("❌ Only admin can view user info.")
-        return
-    if len(context.args) != 1:
-        await update.message.reply_text("Usage: /userinfo <user_id>")
-        return
-    try:
-        target_user = int(context.args[0])
-        access_count = load_access_count()
-        user_data = access_count.get(str(target_user), {'count': 0, 'total_limit': 1})
-        count = user_data['count']
-        total_limit = user_data['total_limit']
-        remaining = max(0, total_limit - count)
-        authorized_users = load_authorized_users()
-        authorized = target_user in authorized_users
-        blocked = target_user in load_blocked_users()
-        user_info = authorized_users.get(target_user, {})
-        user_name = user_info.get('name', 'N/A')
-        user_username = user_info.get('username', 'N/A')
-        feedback = [f for f in load_feedback() if f['user_id'] == target_user]
-        feedback_text = "\n".join([f["message"] + f" ({f['timestamp']})" for f in feedback[-3:]]) or "No recent feedback"
-        await update.message.reply_text(
-            f"👤 User ID: {target_user}\n"
-            f"👤 Name: {user_name}\n"
-            f"🔗 Username: @{user_username}\n"
-            f"🔓 Authorized: {'Yes' if authorized else 'No'}\n"
-            f"🚫 Blocked: {'Yes' if blocked else 'No'}\n"
-            f"🔎 Searches used: {count}\n"
-            f"📊 Total limit: {total_limit}\n"
-            f"📉 Remaining: {remaining}\n"
-            f"📝 Recent Feedback:\n{feedback_text}"
-        )
-    except ValueError:
-        await update.message.reply_text("Invalid user ID.")
-    except Exception as e:
-        await update.message.reply_text(f"❌ Error fetching user info: {str(e)}")
-        save_log("errors", {"user_id": user_id, "error": f"Userinfo failed: {str(e)}"})
-
-async def feedback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.message.from_user.id
-    if await check_blocked(user_id, update, context):
-        return
-    if len(context.args) == 0:
-        await update.message.reply_text("Usage: /feedback <your message>")
-        return
-    msg = " ".join(context.args)
-    feedback_data = {
-        "user_id": user_id,
-        "message": msg,
-        "timestamp": update.message.date.isoformat(),
-        "username": update.message.from_user.username or 'N/A',
-        "name": update.message.from_user.full_name
-    }
-    try:
-        save_feedback_data(feedback_data)
-        await update.message.reply_text("✅ Feedback received. Thank you!")
-        for attempt in range(3):
-            try:
-                await context.bot.send_message(
-                    chat_id=ADMIN_ID,
-                    text=f"📢 *New Feedback from User:*\n👤 {update.message.from_user.full_name} (@{update.message.from_user.username or 'N/A'})\n🆔 ID: {user_id}\n\n📝 {msg}",
-                    parse_mode='Markdown'
-                )
-                break
-            except telegram.error.BadRequest as e:
-                logger.error(f"Error sending feedback to admin {ADMIN_ID}, attempt {attempt + 1}: {e}")
-                if attempt == 2:
-                    save_log("errors", {"user_id": user_id, "error": f"Failed to send feedback to admin: {str(e)}"})
-                    break
-                await asyncio.sleep(1)
-    except Exception as e:
-        logger.error(f"Error in feedback for user {user_id}: {str(e)}")
-        await update.message.reply_text("❌ Error saving feedback. Please try again.")
-        save_log("errors", {"user_id": user_id, "error": f"Feedback command failed: {str(e)}"})
-
-async def perform_search(update: Update, context: ContextTypes.DEFAULT_TYPE, column: str):
-    global df
-    user_id = update.message.from_user.id
-    username = update.message.from_user.username or 'N/A'
-    user_name = update.message.from_user.full_name
-    if await check_blocked(user_id, update, context):
-        return
-
-    authorized = load_authorized_users()
-    access_count = load_access_count()
-    user_data = access_count.get(str(user_id), {'count': 0, 'total_limit': 1})
-    count = user_data['count']
-    total_limit = user_data['total_limit']
-    logger.info(f"Performing search for user {user_id} ({user_name} @{username}): count={count}, total_limit={total_limit}, column={column}")
-
-    if user_id != ADMIN_ID and user_id not in authorized:
-        await update.message.reply_text("🔒 You are not authorized. Use /start to request access.")
-        return
-
-    if user_id != ADMIN_ID and count >= total_limit:
-        await update.message.reply_text(
-            f"⚠️ Your search limit is reached. Current: count={count}, total_limit={total_limit}.\n\n"
-            "💌 *Create & Send Redeem Code!* 🔑✨\n\n"
-            "3 Searches → ₹50 💰\n"
-            "10 Searches → ₹100 💸\n"
-            "50 Searches → ₹200 💵\n"
-            "Full Database Access → ₹1000 🏆\n"
-            "Make a Bot Like Mine with Full Database → ₹1200 🤖⚡\n\n"
-            f"Contact {ADMIN_USERNAME} for more searches or to purchase."
-        )
-        logger.warning(f"Search blocked for user {user_id}: count={count}, total_limit={total_limit}")
-        return
-
-    logger.info(f"DataFrame state before search: {len(df)} rows, columns: {list(df.columns) if not df.empty else 'None'}")
-    
-    if df.empty:
-        logger.info(f"DataFrame is empty when searching for column {column}. Reloading data...")
-        df = load_all_excels()
-        logger.info(f"DataFrame state after reload: {len(df)} rows, columns: {list(df.columns) if not df.empty else 'None'}")
-        if df.empty:
-            logger.warning("DataFrame still empty after reload")
-            await update.message.reply_text(f"❗ No Excel data loaded. Contact {ADMIN_USERNAME} to upload Excel files.")
-            return
-
-    if not context.args:
-        await update.message.reply_text(f"Usage: /{column.lower()} <query>")
-        return
-
-    try:
-        query = " ".join(context.args).strip().lower()
-        logger.info(f"Searching for query '{query}' in column '{column}' by user {user_id}")
-        if column not in df.columns:
-            logger.warning(f"Column '{column}' not found in DataFrame. Available columns: {list(df.columns)}")
-            await update.message.reply_text(f"❌ Column '{column}' not found in Excel data. Available columns: {', '.join(df.columns)}")
-            return
-
-        matches = df[df[column].fillna('').astype(str).str.lower().str.contains(query, na=False)]
-        logger.info(f"Found {len(matches)} matches for query '{query}' in column '{column}'")
-
-        if matches.empty:
-            await update.message.reply_text("❌ No matching records found.")
-            await notify_admin_search(context, user_id, username, query, column, None)
-            save_log("searches", {
-                "user_id": user_id,
-                "user_name": user_name,
-                "user_username": username,
-                "query": query,
-                "column": column,
-                "result_count": 0,
-                "student_name": "No match",
-                "timestamp": datetime.now().isoformat()
-            })
-            return
-
-        context.user_data['search_results'] = matches.to_dict(orient='records')
-        context.user_data['search_query'] = query
-        context.user_data['search_column'] = column
-        context.user_data['current_page'] = 0
-        context.user_data['results_per_page'] = 10
-
-        if user_id != ADMIN_ID and len(matches) == 1:
-            if not save_access_count(user_id, count + 1, total_limit):
-                await update.message.reply_text("❌ Error updating search count. Please try again.")
-                return
-            logger.info(f"Incremented search count for user {user_id} to {count + 1}/{total_limit} for single result")
-
-        if len(matches) == 1:
-            record = matches.iloc[0].to_dict()
-            formatted_sections = format_student_record(record)
-            for section in formatted_sections:
-                await update.message.reply_text(section)
-            await notify_admin_search(context, user_id, username, query, column, record, is_full_record=True)
-            save_log("searches", {
-                "user_id": user_id,
-                "user_name": user_name,
-                "user_username": username,
-                "query": query,
-                "column": column,
-                "student_name": record.get('Name', 'Unknown'),
-                "result_count": len(matches),
-                "timestamp": datetime.now().isoformat()
-            })
-        else:
-            await send_paginated_results(update, context)
-            await notify_admin_search(context, user_id, username, query, column, None)
-            save_log("searches", {
-                "user_id": user_id,
-                "user_name": user_name,
-                "user_username": username,
-                "query": query,
-                "column": column,
-                "student_name": "Multiple matches",
-                "result_count": len(matches),
-                "timestamp": datetime.now().isoformat()
-            })
-            return
-
-    except Exception as e:
-        logger.error(f"Error in search for user {user_id}: {str(e)}")
-        await update.message.reply_text(f"❌ Search failed: {str(e)}")
-        save_log("errors", {"user_id": user_id, "error": f"Search failed: {str(e)}"})
-
-async def send_paginated_results(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    results = context.user_data.get('search_results', [])
-    query = context.user_data.get('search_query', '')
-    column = context.user_data.get('search_column', '')
-    current_page = context.user_data.get('current_page', 0)
-    results_per_page = context.user_data.get('results_per_page', 10)
-
-    if not results:
-        await update.message.reply_text("❌ No search results available.")
-        return
-
-    total_results = len(results)
-    total_pages = (total_results + results_per_page - 1) // results_per_page
-    start_idx = current_page * results_per_page
-    end_idx = min(start_idx + results_per_page, total_results)
-
-    summary_text = f"Found {total_results} matches for '{query}' in {column}. Showing {start_idx + 1}-{end_idx} of {total_results}:\n\n"
-    buttons = []
-    for idx, record in enumerate(results[start_idx:end_idx], start=start_idx):
-        course = record.get('Course', 'Unknown')
-        name = record.get('Name', 'Unknown')
-        summary_text += f"{idx + 1}. {name} ({course})\n"
-        buttons.append([InlineKeyboardButton(f"{name} ({course})", callback_data=f"select_{idx}")])
-
-    nav_buttons = []
-    if current_page > 0:
-        nav_buttons.append(InlineKeyboardButton("⬅️ Previous", callback_data=f"page_{current_page - 1}"))
-    if end_idx < total_results:
-        nav_buttons.append(InlineKeyboardButton("Next ➡️", callback_data=f"page_{current_page + 1}"))
-    if nav_buttons:
-        buttons.append(nav_buttons)
-
-    keyboard = InlineKeyboardMarkup(buttons)
-    logger.info(f"Sending paginated results: page {current_page + 1}/{total_pages}, showing {start_idx + 1}-{end_idx}")
-    
-    try:
-        if isinstance(update, telegram.Update) and update.callback_query:
-            await update.callback_query.edit_message_text(summary_text, reply_markup=keyboard)
-        else:
-            await update.message.reply_text(summary_text, reply_markup=keyboard)
-    except Exception as e:
-        logger.error(f"Error sending paginated results: {str(e)}")
-        save_log("errors", {"error": f"Failed to send paginated results: {str(e)}"})
-
-async def search_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await perform_search(update, context, 'Name')
-
-async def search_email(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await perform_search(update, context, 'Student Email')
-
-async def search_phone(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await perform_search(update, context, 'Student Mobile')
-
-async def download_one(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = update.effective_user
-    user_id = user.id
-    if await check_blocked(user_id, update, context):
-        return
-
-    if len(context.args) != 1:
-        await update.message.reply_text("❗ Usage: /downloadone <id> (8000-9600)\nEnter an ID between 8000 and 9600 to download salary slip.")
-        return
-
-    try:
-        emp_id = int(context.args[0])
-        if not (8000 <= emp_id <= 9600):
-            await update.message.reply_text("❗ Please provide an ID between 8000 and 9600.")
-            return
-    except ValueError:
-        await update.message.reply_text("❗ Please provide a valid employee ID (8000-9600).")
-        return
-
-    file_path = download_pdf(emp_id)
-    if file_path:
-        filename = os.path.basename(file_path)
-        await update.message.reply_document(document=open(file_path, "rb"), filename=filename)
-        log_usage(user, f"Downloaded salary slip: {filename}")
-        await notify_admin(context, user, f"Downloaded salary slip: {filename} (ID: {emp_id})")
-        save_log("salary_downloads", {
-            "user_id": user_id,
-            "user_name": user.full_name,
-            "user_username": user.username or 'N/A',
-            "emp_id": emp_id,
-            "filename": filename,
-            "timestamp": datetime.now().isoformat()
-        })
-    else:
-        await update.message.reply_text(f"❌ Salary slip not found for ID {emp_id}.")
-
-async def download_all(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.message.from_user.id
-    if await check_blocked(user_id, update, context):
-        return
-    if user_id != ADMIN_ID:
-        await update.message.reply_text("❌ Only admin can download multiple slips.")
-        return
-
-    if len(context.args) != 2:
-        await update.message.reply_text("❗ Usage: /downloadall <start> <end> (8000-9600)")
-        return
-
-    try:
-        start_id = int(context.args[0])
-        end_id = int(context.args[1])
-        if not (8000 <= start_id <= end_id <= 9600):
-            await update.message.reply_text("❗ IDs must be between 8000 and 9600, start <= end.")
-            return
-    except ValueError:
-        await update.message.reply_text("❗ Please provide valid start and end IDs (8000-9600).")
-        return
-
-    await update.message.reply_text(f"⏬ Downloading slips from {start_id} to {end_id}...")
-
-    successful_downloads = 0
-    for i in range(start_id, end_id + 1):
-        file_path = download_pdf(i)
-        if file_path:
-            filename = os.path.basename(file_path)
-            await update.message.reply_document(document=open(file_path, "rb"), filename=filename)
-            log_usage(update.effective_user, f"Downloaded batch slip: {filename}")
-            await notify_admin(context, update.effective_user, f"Downloaded batch slip: {filename} (ID: {i})")
-            successful_downloads += 1
-        else:
-            await update.message.reply_text(f"❌ ID {i} Not Found.")
-        await asyncio.sleep(0.5)
-
-    await update.message.reply_text(f"✅ Batch download complete. Successful: {successful_downloads}/{end_id - start_id + 1}")
-    save_log("batch_downloads", {
-        "admin_id": user_id,
-        "start_id": start_id,
-        "end_id": end_id,
-        "successful": successful_downloads,
-        "timestamp": datetime.now().isoformat()
-    })
-
-async def notify_admin(context, user, action):
-    for attempt in range(3):
-        try:
-            await context.bot.send_message(
-                chat_id=ADMIN_ID,
-                text=f"📢 *User Alert:*\n👤 @{user.username or 'NoUsername'}\n🆔 {user.id}\n🎯 Action: `{action}`",
-                parse_mode="Markdown"
-            )
-            break
-        except telegram.error.BadRequest as e:
-            logger.error(f"Error notifying admin for user {user.id}, attempt {attempt + 1}: {e}")
-            if attempt == 2:
-                save_log("errors", {"user_id": user.id, "error": f"Failed to notify admin: {str(e)}"})
-
-async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.message.from_user.id
-    if await check_blocked(user_id, update, context):
-        return
-    if user_id != ADMIN_ID:
-        await update.message.reply_text("❌ Only admin can upload files.")
-        return
-
-    doc: Document = update.message.document
-    file_name = doc.file_name
-    is_csv = file_name.lower().endswith(".csv")
-    is_xlsx = file_name.lower().endswith(".xlsx")
-
-    if not (is_csv or is_xlsx):
-        await update.message.reply_text("❌ Only .csv or .xlsx files allowed.")
-        return
-
-    try:
-        file = await doc.get_file()
-        file_data = await file.download_as_bytearray()
-        file_stream = io.BytesIO(file_data)
-
-        if is_csv:
-            try:
-                csv_df = pd.read_csv(file_stream)
-                logger.info(f"Read CSV file {file_name} with {len(csv_df)} rows, columns: {list(csv_df.columns)}")
-            except Exception as e:
-                error_msg = f"❌ Error reading CSV file: {str(e)}"
-                logger.error(error_msg)
-                await update.message.reply_text(error_msg)
-                save_log("errors", {"user_id": user_id, "error": f"CSV read failed: {str(e)}"})
-                return
-
-            columns_found = set(csv_df.columns)
-            required_columns = {'Name', 'Student Email', 'Student Mobile', 'Course'}
-            if not required_columns.issubset(columns_found):
-                missing = required_columns - columns_found
-                await update.message.reply_text(f"❌ File missing required columns: {', '.join(missing)}")
-                return
-
-            xlsx_stream = io.BytesIO()
-            csv_df.to_excel(xlsx_stream, index=False, engine='openpyxl')
-            xlsx_stream.seek(0)
-            xlsx_file_name = file_name.rsplit('.', 1)[0] + '.xlsx'
-            save_excel_to_gridfs(xlsx_stream, xlsx_file_name)
-            await update.message.reply_text(f"✅ CSV file {file_name} converted to {xlsx_file_name} and uploaded.")
-        else:
-            excel_dfs = pd.read_excel(file_stream, sheet_name=None, engine='openpyxl')
-            file_stream.seek(0)
-            columns_found = set()
-            row_counts = []
-            for sheet_name, sheet_df in excel_dfs.items():
-                columns_found.update(sheet_df.columns)
-                row_counts.append(len(sheet_df))
-                logger.info(f"Sheet '{sheet_name}' in {file_name} has {len(sheet_df)} rows, columns: {list(sheet_df.columns)}")
-            
-            required_columns = {'Name', 'Student Email', 'Student Mobile', 'Course'}
-            if not required_columns.issubset(columns_found):
-                missing = required_columns - columns_found
-                await update.message.reply_text(f"❌ Excel file missing required columns: {', '.join(missing)}")
-                return
-
-            save_excel_to_gridfs(file_stream, file_name)
-            await update.message.reply_text(f"✅ Excel file {file_name} uploaded.")
-
-        global df
-        df = load_all_excels()
-        await update.message.reply_text(f"✅ Data reloaded. DataFrame has {len(df)} rows, columns: {list(df.columns) if not df.empty else 'None'}.")
-    except Exception as e:
-        error_msg = f"❌ Error processing file {file_name}: {str(e)}"
-        logger.error(error_msg)
-        await update.message.reply_text(error_msg)
-        save_log("errors", {"user_id": user_id, "error": f"File upload failed: {str(e)}"})
-
-async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.message.from_user.id
-    if await check_blocked(user_id, update, context):
-        return
-    if user_id != ADMIN_ID:
-        await update.message.reply_text("❌ Only admin can broadcast.")
-        return
-
-    if not context.args:
-        await update.message.reply_text("Usage: /broadcast <message>")
-        return
-
-    msg = " ".join(context.args)
-    authorized = load_authorized_users()
-    total_sent = 0
-
-    for uid in authorized:
-        for attempt in range(3):
-            try:
-                await context.bot.send_message(chat_id=uid, text=f"📢 Broadcast from {ADMIN_USERNAME}:\n\n{msg}")
-                total_sent += 1
-                break
-            except telegram.error.BadRequest as e:
-                logger.error(f"Broadcast error to {uid}, attempt {attempt + 1}: {e}")
-                if attempt == 2:
-                    save_log("errors", {"user_id": uid, "error": f"Broadcast failed: {str(e)}"})
-                await asyncio.sleep(1)
-
-    await update.message.reply_text(f"Broadcast sent to {total_sent} users.")
-
-async def addaccess(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.message.from_user.id
-    if await check_blocked(user_id, update, context):
-        return
-    if user_id != ADMIN_ID:
-        await update.message.reply_text("❌ Only admin can add access.")
-        return
-
-    if len(context.args) != 2:
-        await update.message.reply_text("Usage: /addaccess <user_id> <count>")
-        return
-
-    try:
-        target_user = int(context.args[0])
-        additional_count = int(context.args[1])
-        if additional_count <= 0:
-            await update.message.reply_text("❌ Count must be positive.")
-            return
-
-        access_count = load_access_count()
-        user_data = access_count.get(str(target_user), {'count': 0, 'total_limit': 1})
-        current_count = user_data['count']
-        current_limit = user_data['total_limit']
-        new_limit = current_limit + additional_count
-
-        if save_access_count(target_user, current_count, new_limit):
-            await update.message.reply_text(
-                f"✅ Added {additional_count} searches for user {target_user}. New limit: {new_limit}"
-            )
-            save_log("access_update", {
-                "admin_id": user_id,
-                "target_user_id": target_user,
-                "additional_count": additional_count,
-                "new_limit": new_limit,
-                "timestamp": datetime.now().isoformat()
-            })
-            try:
-                await context.bot.send_message(
-                    chat_id=target_user,
-                    text=f"🎉 Good news! Your search limit has been increased by {additional_count}. New total limit: {new_limit}. Enjoy! 🚀"
-                )
-            except telegram.error.BadRequest as e:
-                logger.error(f"Error notifying user {target_user} about access update: {e}")
-                save_log("errors", {"user_id": target_user, "error": f"Failed to notify user about access update: {str(e)}"})
-        else:
-            await update.message.reply_text("❌ Error updating access count.")
-    except ValueError:
-        await update.message.reply_text("❌ Invalid user ID or count.")
-    except Exception as e:
-        await update.message.reply_text(f"❌ Error: {str(e)}")
-        save_log("errors", {"user_id": user_id, "error": f"Addaccess failed: {str(e)}"})
-
-async def block(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.message.from_user.id
-    if await check_blocked(user_id, update, context):
-        return
-    if user_id != ADMIN_ID:
-        await update.message.reply_text("❌ Only admin can block users.")
-        return
-
-    if len(context.args) != 1:
-        await update.message.reply_text("Usage: /block <user_id>")
-        return
-
-    try:
-        target_user = int(context.args[0])
-        if target_user == ADMIN_ID:
-            await update.message.reply_text("❌ Cannot block the admin!")
-            return
-        save_blocked_user(target_user)
-        await update.message.reply_text(f"✅ User {target_user} blocked.")
-        save_log("block_user", {
-            "admin_id": user_id,
-            "target_user_id": target_user,
-            "timestamp": datetime.now().isoformat()
-        })
-        try:
-            await context.bot.send_message(
-                chat_id=target_user,
-                text=f"🚫 Your access to sniper's Bot has been blocked. Contact {ADMIN_USERNAME} for assistance."
-            )
-        except telegram.error.BadRequest as e:
-            logger.error(f"Error notifying user {target_user} about block: {e}")
-            save_log("errors", {"user_id": target_user, "error": f"Failed to notify user about block: {str(e)}"})
-    except ValueError:
-        await update.message.reply_text("❌ Invalid user ID.")
-    except Exception as e:
-        await update.message.reply_text(f"❌ Error: {str(e)}")
-        save_log("errors", {"user_id": user_id, "error": f"Block failed: {str(e)}"})
-
-async def unblock(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.message.from_user.id
-    if await check_blocked(user_id, update, context):
-        return
-    if user_id != ADMIN_ID:
-        await update.message.reply_text("❌ Only admin can unblock users.")
-        return
-
-    if len(context.args) != 1:
-        await update.message.reply_text("Usage: /unblock <user_id>")
-        return
-
-    try:
-        target_user = int(context.args[0])
-        remove_blocked_user(target_user)
-        await update.message.reply_text(f"✅ User {target_user} unblocked.")
-        save_log("unblock_user", {
-            "admin_id": user_id,
-            "target_user_id": target_user,
-            "timestamp": datetime.now().isoformat()
-        })
-        try:
-            await context.bot.send_message(
-                chat_id=target_user,
-                text=f"🎉 Your access to sniper's Bot has been restored! Start using /help to see commands. 🚀"
-            )
-        except telegram.error.BadRequest as e:
-            logger.error(f"Error notifying user {target_user} about unblock: {e}")
-            save_log("errors", {"user_id": target_user, "error": f"Failed to notify user about unblock: {str(e)}"})
-    except ValueError:
-        await update.message.reply_text("❌ Invalid user ID.")
-    except Exception as e:
-        await update.message.reply_text(f"❌ Error: {str(e)}")
-        save_log("errors", {"user_id": user_id, "error": f"Unblock failed: {str(e)}"})
-
-async def logs(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.message.from_user.id
-    if await check_blocked(user_id, update, context):
-        return
-    if user_id != ADMIN_ID:
-        await update.message.reply_text("❌ Only admin can view logs.")
-        return
-
-    logs = load_logs()
-    if not logs:
-        await update.message.reply_text("📜 No logs found.")
-        return
-
-    log_text = "📜 *Recent Logs* (Last 100):\n\n"
-    for log in logs:
-        log_data = log['data']
-        log_type = log['type']
-        timestamp = log.get('readable_timestamp', log['timestamp'])
-        user_name = log_data.get('user_name', 'N/A')
-        user_username = log_data.get('user_username', 'N/A')
-        user_id = log_data.get('user_id', 'N/A')
-        action = log_data.get('action', 'N/A')
-        if log_type == "searches":
-            query = log_data.get('query', 'N/A')
-            column = log_data.get('column', 'N/A')
-            result_count = log_data.get('result_count', 0)
-            student_name = log_data.get('student_name', 'N/A')
-            log_text += (
-                f"[{timestamp}] 🔍 Search by {user_name} (@{user_username}, ID: {user_id})\n"
-                f"Query: {query} (in {column}), Results: {result_count}, Student: {student_name}\n\n"
-            )
-        elif log_type == "salary_downloads":
-            emp_id = log_data.get('emp_id', 'N/A')
-            filename = log_data.get('filename', 'N/A')
-            log_text += (
-                f"[{timestamp}] 📄 Salary Slip Download by {user_name} (@{user_username}, ID: {user_id})\n"
-                f"Employee ID: {emp_id}, File: {filename}\n\n"
-            )
-        elif log_type == "batch_downloads":
-            start_id = log_data.get('start_id', 'N/A')
-            end_id = log_data.get('end_id', 'N/A')
-            successful = log_data.get('successful', 0)
-            log_text += (
-                f"[{timestamp}] 📥 Batch Download by Admin (ID: {user_id})\n"
-                f"Range: {start_id}-{end_id}, Successful: {successful}\n\n"
-            )
-        elif log_type == "access_requests":
-            log_text += (
-                f"[{timestamp}] 🔐 Access Request by {user_name} (@{user_username}, ID: {user_id})\n\n"
-            )
-        elif log_type == "errors":
-            error = log_data.get('error', 'N/A')
-            log_text += (
-                f"[{timestamp}] ⚠️ Error for User ID: {user_id}\n"
-                f"Details: {error}\n\n"
-            )
-        elif log_type == "broadcast_commands":
-            total_sent = log_data.get('total_sent', 0)
-            failed_users = log_data.get('failed_users', [])
-            log_text += (
-                f"[{timestamp}] 📢 Command List Broadcast by Admin (ID: {user_id})\n"
-                f"Sent to: {total_sent} users, Failed: {len(failed_users)}\n\n"
-            )
-        elif log_type == "online_broadcast":
-            total_sent = log_data.get('total_sent', 0)
-            failed_users = log_data.get('failed_users', [])
-            log_text += (
-                f"[{timestamp}] 🚀 Online Status Broadcast\n"
-                f"Sent to: {total_sent} users, Failed: {len(failed_users)}\n\n"
-            )
-        else:
-            log_text += f"[{timestamp}] {log_type}: {action}\n\n"
-
-    await update.message.reply_text(log_text, parse_mode='Markdown')
-
-async def analytics(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.message.from_user.id
-    if await check_blocked(user_id, update, context):
-        return
-    if user_id != ADMIN_ID:
-        await update.message.reply_text("❌ Only admin can view analytics.")
-        return
-
-    access_count = load_access_count()
-    authorized = load_authorized_users()
-    logs = load_logs()
-    total_searches = sum(user_data['count'] for user_data in access_count.values())
-    total_users = len(authorized)
-    active_users = len([uid for uid, data in access_count.items() if data['count'] > 0])
-    recent_logs = len([log for log in logs if log['type'] == 'searches' and 
-                       (datetime.now() - datetime.fromisoformat(log['timestamp'])).total_seconds() < 24*3600])
-
-    analytics_text = (
-        f"📊 *Bot Analytics* 📊\n\n"
-        f"👥 Total Authorized Users: {total_users}\n"
-        f"🔎 Total Searches: {total_searches}\n"
-        f"🧑‍💼 Active Users (with searches): {active_users}\n"
-        f"📈 Searches in Last 24 Hours: {recent_logs}\n\n"
-        f"🔍 *Per-User Search Stats*:\n"
-    )
-
-    for uid, data in access_count.items():
-        user_info = authorized.get(int(uid), {'name': 'N/A', 'username': 'N/A'})
-        analytics_text += (
-            f"👤 {user_info['name']} (@{user_info['username']}, ID: {uid})\n"
-            f"   Searches: {data['count']}/{data['total_limit']}\n"
-        )
-
-    await update.message.reply_text(analytics_text, parse_mode='Markdown')
-
-async def replyfeedback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.message.from_user.id
-    if await check_blocked(user_id, update, context):
-        return
-    if user_id != ADMIN_ID:
-        await update.message.reply_text("❌ Only admin can reply to feedback.")
-        return
-
-    if len(context.args) < 2:
-        await update.message.reply_text("Usage: /replyfeedback <user_id> <message>")
-        return
-
-    try:
-        target_user = int(context.args[0])
-        msg = " ".join(context.args[1:])
-        await context.bot.send_message(
-            chat_id=target_user,
-            text=f"📩 *Reply from {ADMIN_USERNAME}:*\n\n{msg}",
-            parse_mode='Markdown'
-        )
-        await update.message.reply_text(f"✅ Reply sent to user {target_user}.")
-        save_log("feedback_reply", {
-            "admin_id": user_id,
-            "target_user_id": target_user,
-            "message": msg,
-            "timestamp": datetime.now().isoformat()
-        })
-    except ValueError:
-        await update.message.reply_text("❌ Invalid user ID.")
-    except telegram.error.BadRequest as e:
-        await update.message.reply_text("❌ Failed to send reply. User may have blocked the bot.")
-        save_log("errors", {"user_id": target_user, "error": f"Failed to send feedback reply: {str(e)}"})
-    except Exception as e:
-        await update.message.reply_text(f"❌ Error: {str(e)}")
-        save_log("errors", {"user_id": user_id, "error": f"Replyfeedback failed: {str(e)}"})
-
-async def exportusers(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.message.from_user.id
-    if await check_blocked(user_id, update, context):
-        return
-    if user_id != ADMIN_ID:
-        await update.message.reply_text("❌ Only admin can export users.")
-        return
-
-    try:
-        authorized = load_authorized_users()
-        access_count = load_access_count()
-        export_data = []
-        for uid, info in authorized.items():
-            user_data = access_count.get(str(uid), {'count': 0, 'total_limit': 1})
-            export_data.append({
-                'user_id': uid,
-                'name': info['name'],
-                'username': info['username'],
-                'searches_used': user_data['count'],
-                'total_limit': user_data['total_limit']
-            })
-
-        export_file = io.StringIO()
-        export_df = pd.DataFrame(export_data)
-        export_df.to_csv(export_file, index=False)
-        export_file.seek(0)
-        filename = f"users_export_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
-        await update.message.reply_document(
-            document=InputFile(export_file, filename=filename),
-            caption=f"📊 Exported {len(export_data)} authorized users."
-        )
-        save_log("export_users", {
-            "admin_id": user_id,
-            "total_users": len(export_data),
-            "filename": filename,
-            "timestamp": datetime.now().isoformat()
-        })
-    except Exception as e:
-        logger.error(f"Error in exportusers for user {user_id}: {str(e)}")
-        await update.message.reply_text(f"❌ Error exporting users: {str(e)}")
-        save_log("errors", {"user_id": user_id, "error": f"Exportusers failed: {str(e)}"})
-
-async def health(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.message.from_user.id
-    if await check_blocked(user_id, update, context):
-        return
-    if user_id != ADMIN_ID:
-        await update.message.reply_text("❌ Only admin can check bot health.")
-        return
-
-    try:
-        # Check MongoDB connection
-        mongo_manager.client.admin.command('ping')
-        mongo_status = "✅ Connected"
-    except Exception as e:
-        mongo_status = f"❌ Disconnected: {str(e)}"
-
-    # Check DataFrame
-    df_status = f"✅ {len(df)} rows, {len(df.columns)} columns" if not df.empty else "❌ Empty"
-
-    # Check authorized users
-    authorized = load_authorized_users()
-    auth_status = f"✅ {len(authorized)} users" if authorized else "❌ No users"
-
-    # Check blocked users
-    blocked = load_blocked_users()
-    blocked_status = f"✅ {len(blocked)} users" if blocked is not None else "❌ Failed to load"
-
-    # Check recent logs
-    logs = load_logs()
-    recent_logs = len([log for log in logs if (datetime.now() - datetime.fromisoformat(log['timestamp'])).total_seconds() < 3600])
-
-    health_text = (
-        f"🏥 *Bot Health Check* 🏥\n\n"
-        f"🤖 Bot Status: ✅ Running\n"
-        f"📡 MongoDB: {mongo_status}\n"
-        f"📊 DataFrame: {df_status}\n"
-        f"👥 Authorized Users: {auth_status}\n"
-        f"🚫 Blocked Users: {blocked_status}\n"
-        f"📜 Logs in Last Hour: {recent_logs}\n"
-        f"⏰ Last Checked: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
-    )
-    await update.message.reply_text(health_text, parse_mode='Markdown')
-    save_log("health_check", {
-        "admin_id": user_id,
-        "mongo_status": mongo_status,
-        "df_status": df_status,
-        "auth_status": auth_status,
-        "blocked_status": blocked_status,
-        "recent_logs": recent_logs,
-        "timestamp": datetime.now().isoformat()
-    })
-async def exportusers(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.message.from_user.id
-    if await check_blocked(user_id, update, context):
-        return
-    if user_id != ADMIN_ID:
-        await update.message.reply_text("❌ Only admin can export users.")
-        return
-
-    try:
-        authorized = load_authorized_users()
-        access_count = load_access_count()
-        export_data = []
-        for uid, info in authorized.items():
-            user_data = access_count.get(str(uid), {'count': 0, 'total_limit': 1})
-            export_data.append({
-                'user_id': uid,
-                'name': info['name'],
-                'username': info['username'],
-                'searches_used': user_data['count'],
-                'total_limit': user_data['total_limit']
-            })
-
-        export_file = io.StringIO()
-        export_df = pd.DataFrame(export_data)
-        export_df.to_csv(export_file, index=False)
-        export_file.seek(0)
-        filename = f"users_export_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
-        await update.message.reply_document(
-            document=InputFile(export_file, filename=filename),
-            caption=f"📊 Exported {len(export_data)} authorized users."
-        )
-        save_log("export_users", {
-            "admin_id": user_id,
-            "total_users": len(export_data),
-            "filename": filename,
-            "timestamp": datetime.now().isoformat()
-        })
-    except Exception as e:
-        logger.error(f"Error in exportusers for user {user_id}: {str(e)}")
-        await update.message.reply_text(f"❌ Error exporting users: {str(e)}")
-        save_log("errors", {"user_id": user_id, "error": f"Exportusers failed: {str(e)}"})
-
-async def health(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.message.from_user.id
-    if await check_blocked(user_id, update, context):
-        return
-    if user_id != ADMIN_ID:
-        await update.message.reply_text("❌ Only admin can check bot health.")
-        return
-
-    try:
-        # Check MongoDB connection
-        mongo_manager.client.admin.command('ping')
-        mongo_status = "✅ Connected"
-    except Exception as e:
-        mongo_status = f"❌ Disconnected: {str(e)}"
-
-    # Check DataFrame
-    df_status = f"✅ {len(df)} rows, {len(df.columns)} columns" if not df.empty else "❌ Empty"
-
-    # Check authorized users
-    authorized = load_authorized_users()
-    auth_status = f"✅ {len(authorized)} users" if authorized else "❌ No users"
-
-    # Check blocked users
-    blocked = load_blocked_users()
-    blocked_status = f"✅ {len(blocked)} users" if blocked is not None else "❌ Failed to load"
-
-    # Check recent logs
-    logs = load_logs()
-    recent_logs = len([log for log in logs if (datetime.now() - datetime.fromisoformat(log['timestamp'])).total_seconds() < 3600])
-
-    health_text = (
-        f"🏥 *Bot Health Check* 🏥\n\n"
-        f"🤖 Bot Status: ✅ Running\n"
-        f"📡 MongoDB: {mongo_status}\n"
-        f"📊 DataFrame: {df_status}\n"
-        f"👥 Authorized Users: {auth_status}\n"
-        f"🚫 Blocked Users: {blocked_status}\n"
-        f"📜 Logs in Last Hour: {recent_logs}\n"
-        f"⏰ Last Checked: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
-    )
-    await update.message.reply_text(health_text, parse_mode='Markdown')
-    save_log("health_check", {
-        "admin_id": user_id,
-        "mongo_status": mongo_status,
-        "df_status": df_status,
-        "auth_status": auth_status,
-        "blocked_status": blocked_status,
-        "recent_logs": recent_logs,
-        "timestamp": datetime.now().isoformat()
-    })
-    except Exception as e:
-        logger.error(f"Error in health for user {user_id}: {str(e)}")
-        await update.message.reply_text(f"❌ Error checking health: {str(e)}")
-        save_log("errors", {"user_id": user_id, "error": f"Health check failed: {str(e)}"})
-
-async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    user_id = query.from_user.id
-    if await check_blocked(user_id, update, context):
-        return
-
-    data = query.data
-    logger.info(f"Callback query from user {user_id}: {data}")
-
-    try:
-        if data.startswith("approve_"):
-            if user_id != ADMIN_ID:
-                await query.message.reply_text("❌ Only admin can approve users.")
-                return
-            target_user = int(data.split("_")[1])
-            authorized = load_authorized_users()
-            if target_user in authorized:
-                await query.message.reply_text("✅ User already authorized.")
-                return
-            user_info = await context.bot.get_chat(target_user)
-            save_authorized_user(target_user, user_info.full_name, user_info.username or 'N/A')
-            save_access_count(target_user, 0, 1)
-            await query.message.reply_text(f"✅ Approved user {target_user}.")
-            await context.bot.send_message(
-                chat_id=target_user,
-                text=f"🎉 Access granted! Use /help to see commands. 🚀"
-            )
-            save_log("approve_user", {
-                "admin_id": user_id,
-                "target_user_id": target_user,
-                "timestamp": datetime.now().isoformat()
-            })
-
-        elif data.startswith("reject_"):
-            if user_id != ADMIN_ID:
-                await query.message.reply_text("❌ Only admin can reject users.")
-                return
-            target_user = int(data.split("_")[1])
-            await context.bot.send_message(
-                chat_id=target_user,
-                text=f"❌ Access request denied. Contact {ADMIN_USERNAME} for assistance."
-            )
-            await query.message.reply_text(f"✅ Rejected user {target_user}.")
-            save_log("reject_user", {
-                "admin_id": user_id,
-                "target_user_id": target_user,
-                "timestamp": datetime.now().isoformat()
-            })
-
-        elif data.startswith("page_"):
-            context.user_data['current_page'] = int(data.split("_")[1])
-            await send_paginated_results(update, context)
-
-        elif data.startswith("select_"):
-            idx = int(data.split("_")[1])
-            results = context.user_data.get('search_results', [])
-            if idx < 0 or idx >= len(results):
-                await query.message.reply_text("❌ Invalid selection.")
-                return
-            record = results[idx]
-            formatted_sections = format_student_record(record)
-            for section in formatted_sections:
-                await query.message.reply_text(section, parse_mode='Markdown')
-            
-            user_id = query.from_user.id
-            username = query.from_user.username or 'N/A'
-            query_text = context.user_data.get('search_query', 'N/A')
-            column = context.user_data.get('search_column', 'N/A')
-            
-            if user_id != ADMIN_ID:
-                access_count = load_access_count()
-                user_data = access_count.get(str(user_id), {'count': 0, 'total_limit': 1})
-                count = user_data['count']
-                total_limit = user_data['total_limit']
-                if save_access_count(user_id, count + 1, total_limit):
-                    logger.info(f"Incremented search count for user {user_id} to {count + 1}/{total_limit} for selected result")
-                else:
-                    await query.message.reply_text("❌ Error updating search count.")
-                    save_log("errors", {"user_id": user_id, "error": "Failed to update search count"})
-                    return
-
-            await notify_admin_search(context, user_id, username, query_text, column, record, is_full_record=True)
-            save_log("searches", {
-                "user_id": user_id,
-                "user_name": query.from_user.full_name,
-                "user_username": username,
-                "query": query_text,
-                "column": column,
-                "student_name": record.get('Name', 'Unknown'),
-                "result_count": 1,
-                "timestamp": datetime.now().isoformat()
-            })
-
-    except telegram.error.Forbidden as e:
-        await query.message.reply_text(f"❌ Action failed: Bot is blocked by user.")
-        save_log("errors", {"user_id": user_id, "error": f"Button callback failed: {str(e)}"})
-    except telegram.error.BadRequest as e:
-        await query.message.reply_text(f"❌ Action failed: {str(e)}")
-        save_log("errors", {"user_id": user_id, "error": f"Button callback failed: {str(e)}"})
-    except ValueError as e:
-        await query.message.reply_text("❌ Invalid input in callback.")
-        save_log("errors", {"user_id": user_id, "error": f"Button callback failed: {str(e)}"})
-    except Exception as e:
-        await query.message.reply_text(f"❌ Error processing callback: {str(e)}")
-        save_log("errors", {"user_id": user_id, "error": f"Button callback failed: {str(e)}"})
-
-async def send_paginated_results(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    try:
-        results = context.user_data.get('search_results', [])
-        query = context.user_data.get('search_query', 'N/A')
-        column = context.user_data.get('search_column', 'N/A')
-        current_page = context.user_data.get('current_page', 0)
-        results_per_page = context.user_data.get('results_per_page', 10)
-
-        if not results:
-            await update.effective_message.reply_text("❌ No search results available.")
-            return
-
-        total_results = len(results)
-        total_pages = (total_results + results_per_page - 1) // results_per_page
-        start_idx = current_page * results_per_page
-        end_idx = min(start_idx + results_per_page, total_results)
-
-        summary_text = f"📊 Found {total_results} matches for '{query}' in {column}. Showing {start_idx + 1}-{end_idx} of {total_results}:\n\n"
-        buttons = []
-        for idx, record in enumerate(results[start_idx:end_idx], start=start_idx):
-            name = record.get('Name', 'Unknown')
-            roll_no = record.get('Roll No', 'N/A')
-            summary_text += f"{idx + 1}. {name} (Roll No: {roll_no})\n"
-            buttons.append([InlineKeyboardButton(f"{name} (Roll No: {roll_no})", callback_data=f"select_{idx}")])
-
-        nav_buttons = []
-        if current_page > 0:
-            nav_buttons.append(InlineKeyboardButton("⬅️ Previous", callback_data=f"page_{current_page - 1}"))
-        if end_idx < total_results:
-            nav_buttons.append(InlineKeyboardButton("Next ➡️", callback_data=f"page_{current_page + 1}"))
-        if nav_buttons:
-            buttons.append(nav_buttons)
-
-        keyboard = InlineKeyboardMarkup(buttons)
-        logger.info(f"Sending paginated results: page {current_page + 1}/{total_pages}, showing {start_idx + 1}-{end_idx}")
-
-        if update.callback_query:
-            await update.callback_query.edit_message_text(summary_text, reply_markup=keyboard, parse_mode='Markdown')
-        else:
-            await update.message.reply_text(summary_text, reply_markup=keyboard, parse_mode='Markdown')
-    except telegram.error.Forbidden as e:
-        logger.error(f"Error sending paginated results: Bot blocked by user")
-        await update.effective_message.reply_text("❌ Error: Bot is blocked by user.")
-        save_log("errors", {"error": f"Failed to send paginated results: {str(e)}"})
-    except telegram.error.BadRequest as e:
-        logger.error(f"Error sending paginated results: {str(e)}")
-        await update.effective_message.reply_text(f"❌ Error displaying results: {str(e)}")
-        save_log("errors", {"error": f"Failed to send paginated results: {str(e)}"})
-    except Exception as e:
-        logger.error(f"Error sending paginated results: {str(e)}")
-        await update.effective_message.reply_text(f"❌ Error displaying results: {str(e)}")
-        save_log("errors", {"error": f"Failed to send paginated results: {str(e)}"})
-
-async def broadcast_online_status(application):
-    authorized = load_authorized_users()
-    total_sent = 0
-    failed_users = []
-    online_message = (
-        "🚀 *sniper's Bot is BACK ONLINE!* 🔥\n\n"
-        "Your ultimate bot is ready to roll! 💪\n"
-        "Use these commands to unleash its power:\n\n"
-        "🔐 /start - Request access\n"
-        "🔍 /name <query> - Search by name\n"
-        "📧 /email <query> - Search by email\n"
-        "📱 /phone <query> - Search by phone\n"
-        "📄 /downloadone <id> (8000-9600) - Grab a salary slip (unlimited!) 💥\n"
-        "📊 /profile - Check your usage stats\n"
-        "📝 /feedback <message> - Drop your thoughts\n"
-        "ℹ️ /help - Get the command list\n\n"
-        f"🤖 *Powered by {ADMIN_USERNAME}* - Stay sharp! 🦅"
-    )
-
-    for uid in authorized:
-        for attempt in range(3):
-            try:
-                await application.bot.send_message(
-                    chat_id=uid,
-                    text=online_message,
-                    parse_mode='Markdown'
-                )
-                total_sent += 1
                 logger.info(f"Sent online status to user {uid}")
                 break
             except telegram.error.Forbidden as e:
@@ -1989,84 +615,1249 @@ async def broadcast_online_status(application):
             "timestamp": datetime.now().isoformat()
         })
 
-async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    logger.error(f"Update {update} caused error: {context.error}")
-    save_log("errors", {
-        "update": str(update),
-        "error": str(context.error),
+# ---------- Bot Commands -------------
+async def check_blocked(user_id, update, context):
+    if user_id == ADMIN_ID:
+        logger.info(f"Admin {user_id} bypassed block check")
+        return False
+    blocked = load_blocked_users()
+    if user_id in blocked:
+        await update.message.reply_text("❌ You are blocked from using this bot.")
+        logger.warning(f"Blocked user {user_id} attempted to use command")
+        return True
+    return False
+
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    user_id = user.id
+    user_list.add(user_id)
+    if await check_blocked(user_id, update, context):
+        return
+
+    authorized = load_authorized_users()
+    if user_id in authorized or user_id == ADMIN_ID:
+        await update.message.reply_text(
+            f"🔥 Welcome to sniper's Bot! 🔥\n\n"
+            f"✅ You already have access.\n\n"
+            "📋 Commands:\n"
+            f"🔍 /name <query> - Search by name\n"
+            f"📧 /email <query> - Search by email\n"
+            f"📱 /phone <query> - Search by phone\n"
+            f"📄 /downloadone <id> - Download salary slip (8000-9600, unlimited for users)\n"
+            f"📊 /profile - View usage stats\n"
+            f"📝 /feedback <message> - Send feedback\n"
+            f"ℹ️ /help - Show commands\n\n"
+            f"🤖 *Contact {ADMIN_USERNAME} for support*",
+            parse_mode='Markdown'
+        )
+        save_authorized_user(user_id, user.full_name, user.username or 'N/A')
+    else:
+        try:
+            await update.message.reply_text("🔥 Welcome to sniper's Bot! 🔥\n\n🔐 Access request sent to admin. Please wait for approval.", parse_mode='Markdown')
+            keyboard = InlineKeyboardMarkup([[
+                InlineKeyboardButton("✅ Approve", callback_data=f"approve_{user_id}"),
+                InlineKeyboardButton("❌ Reject", callback_data=f"reject_{user_id}")
+            ]])
+            msg = (
+                f"🔐 New Access Request:\n"
+                f"👤 Name: {user.full_name}\n"
+                f"🔗 Username: @{user.username or 'N/A'}\n"
+                f"🆔 ID: {user_id}"
+            )
+            for attempt in range(3):
+                try:
+                    await context.bot.send_message(chat_id=ADMIN_ID, text=msg, reply_markup=keyboard, parse_mode='Markdown')
+                    save_log("access_requests", {
+                        "user_id": user_id,
+                        "name": user.full_name,
+                        "username": user.username or 'N/A',
+                        "timestamp": update.message.date.isoformat()
+                    })
+                    break
+                except telegram.error.BadRequest as e:
+                    logger.error(f"Error sending access request to admin {ADMIN_ID}, attempt {attempt + 1}: {e}")
+                    if attempt == 2:
+                        await update.message.reply_text(f"⚠️ Failed to send access request to admin. Contact {ADMIN_USERNAME}.", parse_mode='Markdown')
+                        save_log("errors", {"user_id": user_id, "error": f"Failed to send access request: {str(e)}"})
+                        return
+                    await asyncio.sleep(1)
+        except Exception as e:
+            logger.error(f"Error in start command for user {user_id}: {str(e)}")
+            await update.message.reply_text(f"❌ An error occurred. Contact {ADMIN_USERNAME}.", parse_mode='Markdown')
+            save_log("errors", {"user_id": user_id, "error": f"Start command failed: {str(e)}"})
+
+async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.message.from_user.id
+    logger.info(f"Help command invoked by user {user_id}")
+    if await check_blocked(user_id, update, context):
+        logger.warning(f"User {user_id} blocked from accessing /help")
+        return
+
+    help_text = (
+        "📋 *Bot Commands by sniper* 📋\n\n"
+        "🔐 /start - Request access\n"
+        "🔍 /name <query> - Search by name\n"
+        "📧 /email <query> - Search by email\n"
+        "📱 /phone <query> - Search by phone\n"
+        "📄 /downloadone <id> (8000-9600) - Download salary slip (unlimited) 💥\n"
+        "📊 /profile - View usage stats\n"
+        "📝 /feedback <message> - Send feedback\n"
+        "ℹ️ /help - Show this message\n\n"
+        f"🤖 *Coded by {ADMIN_USERNAME}* 🔥"
+    )
+    if user_id == ADMIN_ID:
+        logger.info(f"Admin {user_id} accessing admin help menu")
+        help_text = (
+            "📋 *Bot Commands by sniper* 📋\n\n"
+            "🔐 /start - Request access\n"
+            "🔍 /name <query> - Search by name\n"
+            "📧 /email <query> - Search by email\n"
+            "📱 /phone <query> - Search by phone\n"
+            "📄 /downloadone <id> - Download single salary slip\n"
+            "📥 /downloadall <start> <end> - Download multiple slips (admin only)\n"
+            "📄 /listexcel - List available Excel files (admin)\n"
+            "🔄 /reload - Reload all Excel data (admin)\n"
+            "📊 /profile - Your usage stats\n"
+            "👤 /userinfo <user_id> - View user info (admin)\n"
+            "📝 /feedback <message> - Send feedback\n"
+            "📢 /broadcast <msg> - Admin-only broadcast\n"
+            "➕ /addaccess <user_id> <count> - Admin adds access count\n"
+            "🚫 /block <user_id> - Admin blocks user\n"
+            "✅ /unblock <user_id> - Admin unblocks user\n"
+            "📜 /logs - View recent logs with user details (admin)\n"
+            "📊 /analytics - View bot stats with per-user searches (admin)\n"
+            "📩 /replyfeedback <user_id> <msg> - Reply to feedback (admin)\n"
+            "📤 /exportusers - Export authorized users (admin)\n"
+            "🏥 /health - Check bot health (admin)\n"
+            "📢 /sharecommands - Share command list to all users (admin)\n"
+            "ℹ️ /help - Show this message\n\n"
+            f"🤖 *Coded by {ADMIN_USERNAME}* 🔥"
+        )
+
+    for attempt in range(3):
+        try:
+            await update.message.reply_text(help_text, parse_mode='Markdown')
+            logger.info(f"Help command executed for user {user_id}")
+            save_log("help_command", {
+                "user_id": user_id,
+                "user_name": update.message.from_user.full_name,
+                "user_username": update.message.from_user.username or 'N/A',
+                "timestamp": datetime.now().isoformat()
+            })
+            return
+        except telegram.error.BadRequest as e:
+            logger.error(f"Error sending help message to user {user_id}, attempt {attempt + 1}: {e}")
+            if attempt == 2:
+                await update.message.reply_text(f"❌ Failed to display help. Contact {ADMIN_USERNAME}.", parse_mode='Markdown')
+                save_log("errors", {
+                    "user_id": user_id,
+                    "error": f"Failed to send help message: {str(e)}",
+                    "timestamp": datetime.now().isoformat()
+                })
+            await asyncio.sleep(1)
+        except Exception as e:
+            logger.error(f"Unexpected error in help command for user {user_id}: {str(e)}")
+            await update.message.reply_text(f"❌ Error displaying help. Contact {ADMIN_USERNAME}.", parse_mode='Markdown')
+            save_log("errors", {
+                "user_id": user_id,
+                "error": f"Help command failed: {str(e)}",
+                "timestamp": datetime.now().isoformat()
+            })
+            return
+
+async def sharecommands(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.message.from_user.id
+    if await check_blocked(user_id, update, context):
+        return
+    if user_id != ADMIN_ID:
+        await update.message.reply_text("❌ Only admin can share commands.", parse_mode='Markdown')
+        return
+
+    command_message = (
+        "🔥 *sniper's Bot Command List* 🔥\n\n"
+        "Welcome to the ultimate bot experience! 🚀\n"
+        "Here are your commands to unleash the power:\n\n"
+        "🔐 /start - Kickstart your journey with access request\n"
+        "🔍 /name <query> - Hunt down records by name\n"
+        "📧 /email <query> - Track records by email\n"
+        "📱 /phone <query> - Find records by phone number\n"
+        "📄 /downloadone <id> (8000-9600) - Grab a salary slip (unlimited uses!) 💥\n"
+        "📊 /profile - Check your usage stats like a pro\n"
+        "📝 /feedback <message> - Drop your thoughts to sniper\n"
+        "ℹ️ /help - Get this awesome command list again\n\n"
+        f"🤖 *Powered by {ADMIN_USERNAME}* - Stay sharp! 🦅"
+    )
+
+    authorized = load_authorized_users()
+    total_sent = 0
+    failed_users = []
+
+    for uid in authorized:
+        for attempt in range(3):
+            try:
+                await context.bot.send_message(
+                    chat_id=uid,
+                    text=command_message,
+                    parse_mode='Markdown'
+                )
+                total_sent += 1
+                break
+            except telegram.error.BadRequest as e:
+                logger.error(f"Error sending command list to {uid}, attempt {attempt + 1}: {e}")
+                if attempt == 2:
+                    failed_users.append(uid)
+                    save_log("errors", {
+                        "user_id": uid,
+                        "error": f"Failed to send command list: {str(e)}",
+                        "timestamp": datetime.now().isoformat()
+                    })
+                await asyncio.sleep(1)
+
+    await update.message.reply_text(
+        f"📢 Command list shared with {total_sent} users.\n"
+        f"{'⚠️ Failed to send to: ' + ', '.join(map(str, failed_users)) if failed_users else '✅ All successful!'}",
+        parse_mode='Markdown'
+    )
+    save_log("broadcast_commands", {
+        "admin_id": user_id,
+        "total_sent": total_sent,
+        "failed_users": failed_users,
         "timestamp": datetime.now().isoformat()
     })
-    if update and update.effective_message:
-        try:
-            await update.effective_message.reply_text(
-                f"❌ An error occurred. Contact {ADMIN_USERNAME} for assistance.",
-                parse_mode='Markdown'
-            )
-        except Exception as e:
-            logger.error(f"Failed to send error message to user: {str(e)}")
 
-async def main():
-    application = None
+async def listexcel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.message.from_user.id
+    if await check_blocked(user_id, update, context):
+        return
+    if user_id != ADMIN_ID:
+        await update.message.reply_text("❌ Only admin can list Excel files.", parse_mode='Markdown')
+        return
+    excel_files = get_excel_files()
+    if not excel_files:
+        await update.message.reply_text("❌ No Excel files found.", parse_mode='Markdown')
+        return
+    files_list = "\n".join([f"- {f}" for f in excel_files])
+    await update.message.reply_text(f"📄 Available Excel files:\n{files_list}", parse_mode='Markdown')
+
+async def reload(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.message.from_user.id
+    if await check_blocked(user_id, update, context):
+        return
+    if user_id != ADMIN_ID:
+        await update.message.reply_text("❌ Only admin can reload data.", parse_mode='Markdown')
+        return
+    global df
+    df = load_all_excels()
+    await update.message.reply_text(
+        f"✅ Reloaded data from all Excel files. DataFrame has {len(df)} rows, columns: {list(df.columns) if not df.empty else 'None'}.",
+        parse_mode='Markdown'
+    )
+
+async def profile(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.message.from_user.id
+    if await check_blocked(user_id, update, context):
+        return
+    authorized = load_authorized_users()
+    if user_id not in authorized and user_id != ADMIN_ID:
+        await update.message.reply_text("🔒 You are not authorized. Use /start to request access.", parse_mode='Markdown')
+        return
+    access_count = load_access_count()
+    user_data = access_count.get(str(user_id), {'count': 0, 'total_limit': 1})
+    count = user_data['count']
+    total_limit = user_data['total_limit']
+    remaining = "Unlimited" if user_id == ADMIN_ID else max(0, total_limit - count)
+    await update.message.reply_text(
+        f"👤 User ID: {user_id}\n"
+        f"🔎 Searches used: {count}\n"
+        f"📊 Total limit: {total_limit if user_id != ADMIN_ID else 'Unlimited'}\n"
+        f"📉 Remaining: {remaining}",
+        parse_mode='Markdown'
+    )
+
+async def userinfo(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.message.from_user.id
+    if await check_blocked(user_id, update, context):
+        return
+    if user_id != ADMIN_ID:
+        await update.message.reply_text("❌ Only admin can view user info.", parse_mode='Markdown')
+        return
+    if len(context.args) != 1:
+        await update.message.reply_text("Usage: /userinfo <user_id>", parse_mode='Markdown')
+        return
     try:
+        target_user = int(context.args[0])
+        access_count = load_access_count()
+        user_data = access_count.get(str(target_user), {'count': 0, 'total_limit': 1})
+        count = user_data['count']
+        total_limit = user_data['total_limit']
+        remaining = max(0, total_limit - count)
+        authorized_users = load_authorized_users()
+        authorized = target_user in authorized_users
+        blocked = target_user in load_blocked_users()
+        user_info = authorized_users.get(target_user, {})
+        user_name = user_info.get('name', 'N/A')
+        user_username = user_info.get('username', 'N/A')
+        feedback = [f for f in load_feedback() if f['user_id'] == target_user]
+        feedback_text = "\n".join([f["message"] + f" ({f['timestamp']})" for f in feedback[-3:]]) or "No recent feedback"
+        await update.message.reply_text(
+            f"👤 User ID: {target_user}\n"
+            f"👤 Name: {user_name}\n"
+            f"🔗 Username: @{user_username}\n"
+            f"🔓 Authorized: {'Yes' if authorized else 'No'}\n"
+            f"🚫 Blocked: {'Yes' if blocked else 'No'}\n"
+            f"🔎 Searches used: {count}\n"
+            f"📊 Total limit: {total_limit}\n"
+            f"📉 Remaining: {remaining}\n"
+            f"📝 Recent Feedback:\n{feedback_text}",
+            parse_mode='Markdown'
+        )
+    except ValueError:
+        await update.message.reply_text("Invalid user ID.", parse_mode='Markdown')
+    except Exception as e:
+        await update.message.reply_text(f"❌ Error fetching user info: {str(e)}", parse_mode='Markdown')
+        save_log("errors", {"user_id": user_id, "error": f"Userinfo failed: {str(e)}"})
+
+async def feedback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.message.from_user.id
+    if await check_blocked(user_id, update, context):
+        return
+    if len(context.args) == 0:
+        await update.message.reply_text("Usage: /feedback <your message>", parse_mode='Markdown')
+        return
+    msg = " ".join(context.args)
+    feedback_data = {
+        "user_id": user_id,
+        "message": msg,
+        "timestamp": update.message.date.isoformat(),
+        "username": update.message.from_user.username or 'N/A',
+        "name": update.message.from_user.full_name
+    }
+    try:
+        save_feedback_data(feedback_data)
+        await update.message.reply_text("✅ Feedback received. Thank you!", parse_mode='Markdown')
+        for attempt in range(3):
+            try:
+                await context.bot.send_message(
+                    chat_id=ADMIN_ID,
+                    text=f"📢 *New Feedback from User:*\n👤 {update.message.from_user.full_name} (@{update.message.from_user.username or 'N/A'})\n🆔 ID: {user_id}\n\n📝 {msg}",
+                    parse_mode='Markdown'
+                )
+                break
+            except telegram.error.BadRequest as e:
+                logger.error(f"Error sending feedback to admin {ADMIN_ID}, attempt {attempt + 1}: {e}")
+                if attempt == 2:
+                    save_log("errors", {"user_id": user_id, "error": f"Failed to send feedback to admin: {str(e)}"})
+                    break
+                await asyncio.sleep(1)
+    except Exception as e:
+        logger.error(f"Error in feedback for user {user_id}: {str(e)}")
+        await update.message.reply_text("❌ Error saving feedback. Please try again.", parse_mode='Markdown')
+        save_log("errors", {"user_id": user_id, "error": f"Feedback command failed: {str(e)}"})
+
+async def perform_search(update: Update, context: ContextTypes.DEFAULT_TYPE, column: str):
+    global df
+    user_id = update.message.from_user.id
+    username = update.message.from_user.username or 'N/A'
+    user_name = update.message.from_user.full_name
+    if await check_blocked(user_id, update, context):
+        return
+
+    authorized = load_authorized_users()
+    access_count = load_access_count()
+    user_data = access_count.get(str(user_id), {'count': 0, 'total_limit': 1})
+    count = user_data['count']
+    total_limit = user_data['total_limit']
+    logger.info(f"Performing search for user {user_id} ({user_name} @{username}): count={count}, total_limit={total_limit}, column={column}")
+
+    if user_id != ADMIN_ID and user_id not in authorized:
+        await update.message.reply_text("🔒 You are not authorized. Use /start to request access.", parse_mode='Markdown')
+        return
+
+    if user_id != ADMIN_ID and count >= total_limit:
+        await update.message.reply_text(
+            f"⚠️ Your search limit is reached. Current: count={count}, total_limit={total_limit}.\n\n"
+            "💌 *Create & Send Redeem Code!* 🔑✨\n\n"
+            "3 Searches → ₹50 💰\n"
+            "10 Searches → ₹100 💸\n"
+            "50 Searches → ₹200 💵\n"
+            "Full Database Access → ₹1000 🏆\n"
+            "Make a Bot Like Mine with Full Database → ₹1200 🤖⚡\n\n"
+            f"Contact {ADMIN_USERNAME} for more searches or to purchase.",
+            parse_mode='Markdown'
+        )
+        logger.warning(f"Search blocked for user {user_id}: count={count}, total_limit={total_limit}")
+        return
+
+    logger.info(f"DataFrame state before search: {len(df)} rows, columns: {list(df.columns) if not df.empty else 'None'}")
+    
+    if df.empty:
+        logger.info(f"DataFrame is empty when searching for column {column}. Reloading data...")
+        df = load_all_excels()
+        logger.info(f"DataFrame state after reload: {len(df)} rows, columns: {list(df.columns) if not df.empty else 'None'}")
+        if df.empty:
+            logger.warning("DataFrame still empty after reload")
+            await update.message.reply_text(f"❗ No Excel data loaded. Contact {ADMIN_USERNAME} to upload Excel files.", parse_mode='Markdown')
+            return
+
+    if not context.args:
+        await update.message.reply_text(f"Usage: /{column.lower()} <query>", parse_mode='Markdown')
+        return
+
+    try:
+        query = " ".join(context.args).strip().lower()
+        logger.info(f"Searching for query '{query}' in column '{column}' by user {user_id}")
+        if column not in df.columns:
+            logger.warning(f"Column '{column}' not found in DataFrame. Available columns: {list(df.columns)}")
+            await update.message.reply_text(f"❌ Column '{column}' not found in Excel data. Available columns: {', '.join(df.columns)}", parse_mode='Markdown')
+            return
+
+        matches = df[df[column].fillna('').astype(str).str.lower().str.contains(query, na=False)]
+        logger.info(f"Found {len(matches)} matches for query '{query}' in column '{column}'")
+
+        if matches.empty:
+            await update.message.reply_text("❌ No matching records found.", parse_mode='Markdown')
+            await notify_admin_search(context, user_id, username, query, column, None)
+            save_log("searches", {
+                "user_id": user_id,
+                "user_name": user_name,
+                "user_username": username,
+                "query": query,
+                "column": column,
+                "result_count": 0,
+                "student_name": "No match",
+                "timestamp": datetime.now().isoformat()
+            })
+            return
+
+        context.user_data['search_results'] = matches.to_dict(orient='records')
+        context.user_data['search_query'] = query
+        context.user_data['search_column'] = column
+        context.user_data['current_page'] = 0
+        context.user_data['results_per_page'] = 10
+
+        if user_id != ADMIN_ID and len(matches) == 1:
+            if not save_access_count(user_id, count + 1, total_limit):
+                await update.message.reply_text("❌ Error updating search count. Please try again.", parse_mode='Markdown')
+                return
+            logger.info(f"Incremented search count for user {user_id} to {count + 1}/{total_limit} for single result")
+
+        if len(matches) == 1:
+            record = matches.iloc[0].to_dict()
+            formatted_sections = format_student_record(record)
+            for section in formatted_sections:
+                await update.message.reply_text(section, parse_mode='Markdown')
+            await notify_admin_search(context, user_id, username, query, column, record, is_full_record=True)
+            save_log("searches", {
+                "user_id": user_id,
+                "user_name": user_name,
+                "user_username": username,
+                "query": query,
+                "column": column,
+                "student_name": record.get('Name', 'Unknown'),
+                "result_count": len(matches),
+                "timestamp": datetime.now().isoformat()
+            })
+        else:
+            await send_paginated_results(update, context)
+            await notify_admin_search(context, user_id, username, query, column, None)
+            save_log("searches", {
+                "user_id": user_id,
+                "user_name": user_name,
+                "user_username": username,
+                "query": query,
+                "column": column,
+                "student_name": "Multiple matches",
+                "result_count": len(matches),
+                "timestamp": datetime.now().isoformat()
+            })
+            return
+
+    except Exception as e:
+        logger.error(f"Error in search for user {user_id}: {str(e)}")
+        await update.message.reply_text(f"❌ Search failed: {str(e)}", parse_mode='Markdown')
+        save_log("errors", {"user_id": user_id, "error": f"Search failed: {str(e)}"})
+
+async def send_paginated_results(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    results = context.user_data.get('search_results', [])
+    query = context.user_data.get('search_query', '')
+    column = context.user_data.get('search_column', '')
+    current_page = context.user_data.get('current_page', 0)
+    results_per_page = context.user_data.get('results_per_page', 10)
+
+    if not results:
+        await update.message.reply_text("❌ No search results available.", parse_mode='Markdown')
+        return
+
+    total_results = len(results)
+    total_pages = (total_results + results_per_page - 1) // results_per_page
+    start_idx = current_page * results_per_page
+    end_idx = min(start_idx + results_per_page, total_results)
+
+    summary_text = f"Found {total_results} matches for '{query}' in {column}. Showing {start_idx + 1}-{end_idx} of {total_results}:\n\n"
+    buttons = []
+    for idx, record in enumerate(results[start_idx:end_idx], start=start_idx):
+        course = record.get('Course', 'Unknown')
+        name = record.get('Name', 'Unknown')
+        summary_text += f"{idx + 1}. {name} ({course})\n"
+        buttons.append([InlineKeyboardButton(f"{name} ({course})", callback_data=f"select_{idx}")])
+
+    nav_buttons = []
+    if current_page > 0:
+        nav_buttons.append(InlineKeyboardButton("⬅️ Previous", callback_data=f"page_{current_page - 1}"))
+    if end_idx < total_results:
+        nav_buttons.append(InlineKeyboardButton("Next ➡️", callback_data=f"page_{current_page + 1}"))
+    if nav_buttons:
+        buttons.append(nav_buttons)
+
+    keyboard = InlineKeyboardMarkup(buttons)
+    logger.info(f"Sending paginated results: page {current_page + 1}/{total_pages}, showing {start_idx + 1}-{end_idx}")
+    
+    try:
+        if isinstance(update, telegram.Update) and update.callback_query:
+            await update.callback_query.edit_message_text(summary_text, reply_markup=keyboard, parse_mode='Markdown')
+        else:
+            await update.message.reply_text(summary_text, reply_markup=keyboard, parse_mode='Markdown')
+    except Exception as e:
+        logger.error(f"Error sending paginated results: {str(e)}")
+        save_log("errors", {"error": f"Failed to send paginated results: {str(e)}"})
+
+async def search_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await perform_search(update, context, 'Name')
+
+async def search_email(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await perform_search(update, context, 'Student Email')
+
+async def search_phone(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await perform_search(update, context, 'Student Mobile')
+
+async def download_one(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    user_id = user.id
+    if await check_blocked(user_id, update, context):
+        return
+
+    if len(context.args) != 1:
+        await update.message.reply_text("❗ Usage: /downloadone <id> (8000-9600)\nEnter an ID between 8000 and 9600 to download salary slip.", parse_mode='Markdown')
+        return
+
+    try:
+        emp_id = int(context.args[0])
+        if not (8000 <= emp_id <= 9600):
+            await update.message.reply_text("❗ Please provide an ID between 8000 and 9600.", parse_mode='Markdown')
+            return
+    except ValueError:
+        await update.message.reply_text("❗ Please provide a valid employee ID (8000-9600).", parse_mode='Markdown')
+        return
+
+    file_path = download_pdf(emp_id)
+    if file_path:
+        filename = os.path.basename(file_path)
+        await update.message.reply_document(document=open(file_path, "rb"), filename=filename)
+        log_usage(user, f"Downloaded salary slip: {filename}")
+        await notify_admin(context, user, f"Downloaded salary slip: {filename} (ID: {emp_id})")
+        save_log("salary_downloads", {
+            "user_id": user_id,
+            "user_name": user.full_name,
+            "user_username": user.username or 'N/A',
+            "emp_id": emp_id,
+            "filename": filename,
+            "timestamp": datetime.now().isoformat()
+        })
+    else:
+        await update.message.reply_text(f"❌ Salary slip not found for ID {emp_id}.", parse_mode='Markdown')
+
+async def download_all(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.message.from_user.id
+    if await check_blocked(user_id, update, context):
+        return
+    if user_id != ADMIN_ID:
+        await update.message.reply_text("❌ Only admin can download multiple slips.", parse_mode='Markdown')
+        return
+
+    if len(context.args) != 2:
+        await update.message.reply_text("❗ Usage: /downloadall <start> <end> (8000-9600)", parse_mode='Markdown')
+        return
+
+    try:
+        start_id = int(context.args[0])
+        end_id = int(context.args[1])
+        if not (8000 <= start_id <= end_id <= 9600):
+            await update.message.reply_text("❗ IDs must be between 8000 and 9600, start <= end.", parse_mode='Markdown')
+            return
+    except ValueError:
+        await update.message.reply_text("❗ Please provide valid start and end IDs (8000-9600).", parse_mode='Markdown')
+        return
+
+    await update.message.reply_text(f"⏬ Downloading slips from {start_id} to {end_id}...", parse_mode='Markdown')
+
+    successful_downloads = 0
+    for i in range(start_id, end_id + 1):
+        file_path = download_pdf(i)
+        if file_path:
+            filename = os.path.basename(file_path)
+            await update.message.reply_document(document=open(file_path, "rb"), filename=filename)
+            log_usage(update.effective_user, f"Downloaded batch slip: {filename}")
+            await notify_admin(context, update.effective_user, f"Downloaded batch slip: {filename} (ID: {i})")
+            successful_downloads += 1
+        else:
+            await update.message.reply_text(f"❌ ID {i} Not Found.", parse_mode='Markdown')
+        await asyncio.sleep(0.5)
+
+    await update.message.reply_text(
+        f"✅ Batch download complete. Successful: {successful_downloads}/{end_id - start_id + 1}",
+        parse_mode='Markdown'
+    )
+    save_log("batch_downloads", {
+        "admin_id": user_id,
+        "start_id": start_id,
+        "end_id": end_id,
+        "successful": successful_downloads,
+        "timestamp": datetime.now().isoformat()
+    })
+
+async def notify_admin(context, user, action):
+    for attempt in range(3):
+        try:
+            await context.bot.send_message(
+                chat_id=ADMIN_ID,
+                text=f"📢 *User Alert:*\n👤 @{user.username or 'NoUsername'}\n🆔 {user.id}\n🎯 Action: `{action}`",
+                parse_mode="Markdown"
+            )
+            break
+        except telegram.error.BadRequest as e:
+            logger.error(f"Error notifying admin for user {user.id}, attempt {attempt + 1}: {e}")
+            if attempt == 2:
+                save_log("errors", {"user_id": user.id, "error": f"Failed to notify admin: {str(e)}"})
+
+async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.message.from_user.id
+    if await check_blocked(user_id, update, context):
+        return
+    if user_id != ADMIN_ID:
+        await update.message.reply_text("❌ Only admin can upload files.", parse_mode='Markdown')
+        return
+
+    doc: Document = update.message.document
+    file_name = doc.file_name
+    is_csv = file_name.lower().endswith(".csv")
+    is_xlsx = file_name.lower().endswith(".xlsx")
+
+    if not (is_csv or is_xlsx):
+        await update.message.reply_text("❌ Only .csv or .xlsx files allowed.", parse_mode='Markdown')
+        return
+
+    try:
+        file = await doc.get_file()
+        file_data = await file.download_as_bytearray()
+        file_stream = io.BytesIO(file_data)
+
+        if is_csv:
+            try:
+                csv_df = pd.read_csv(file_stream)
+                logger.info(f"Read CSV file {file_name} with {len(csv_df)} rows, columns: {list(csv_df.columns)}")
+            except Exception as e:
+                error_msg = f"❌ Error reading CSV file: {str(e)}"
+                logger.error(error_msg)
+                await update.message.reply_text(error_msg, parse_mode='Markdown')
+                save_log("errors", {"user_id": user_id, "error": f"CSV read failed: {str(e)}"})
+                return
+
+            columns_found = set(csv_df.columns)
+            required_columns = {'Name', 'Student Email', 'Student Mobile', 'Course'}
+            if not required_columns.issubset(columns_found):
+                missing = required_columns - columns_found
+                await update.message.reply_text(f"❌ File missing required columns: {', '.join(missing)}", parse_mode='Markdown')
+                return
+
+            xlsx_stream = io.BytesIO()
+            csv_df.to_excel(xlsx_stream, index=False, engine='openpyxl')
+            xlsx_stream.seek(0)
+            xlsx_file_name = file_name.rsplit('.', 1)[0] + '.xlsx'
+            save_excel_to_gridfs(xlsx_stream, xlsx_file_name)
+            await update.message.reply_text(f"✅ CSV file {file_name} converted to {xlsx_file_name} and uploaded.", parse_mode='Markdown')
+        else:
+            excel_dfs = pd.read_excel(file_stream, sheet_name=None, engine='openpyxl')
+            file_stream.seek(0)
+            columns_found = set()
+            row_counts = []
+            for sheet_name, sheet_df in excel_dfs.items():
+                columns_found.update(sheet_df.columns)
+                row_counts.append(len(sheet_df))
+                logger.info(f"Sheet '{sheet_name}' in {file_name} has {len(sheet_df)} rows, columns: {list(sheet_df.columns)}")
+            
+            required_columns = {'Name', 'Student Email', 'Student Mobile', 'Course'}
+            if not required_columns.issubset(columns_found):
+                missing = required_columns - columns_found
+                await update.message.reply_text(f"❌ Excel file missing required columns: {', '.join(missing)}", parse_mode='Markdown')
+                return
+
+            save_excel_to_gridfs(file_stream, file_name)
+            await update.message.reply_text(f"✅ Excel file {file_name} uploaded.", parse_mode='Markdown')
+
         global df
         df = load_all_excels()
-        application = ApplicationBuilder().token(BOT_TOKEN).build()
+        await update.message.reply_text(
+            f"✅ Data reloaded. DataFrame has {len(df)} rows, columns: {list(df.columns) if not df.empty else 'None'}.",
+            parse_mode='Markdown'
+        )
+    except Exception as e:
+        error_msg = f"❌ Error processing file {file_name}: {str(e)}"
+        logger.error(error_msg)
+        await update.message.reply_text(error_msg, parse_mode='Markdown')
+        save_log("errors", {"user_id": user_id, "error": f"File upload failed: {str(e)}"})
 
-        # Register command handlers
-        application.add_handler(CommandHandler("start", start))
-        application.add_handler(CommandHandler("help", help_command))
-        application.add_handler(CommandHandler("name", search_name))
-        application.add_handler(CommandHandler("email", search_email))
-        application.add_handler(CommandHandler("phone", search_phone))
-        application.add_handler(CommandHandler("downloadone", download_one))
-        application.add_handler(CommandHandler("downloadall", download_all))
-        application.add_handler(CommandHandler("listexcel", listexcel))
-        application.add_handler(CommandHandler("reload", reload))
-        application.add_handler(CommandHandler("profile", profile))
-        application.add_handler(CommandHandler("userinfo", userinfo))
-        application.add_handler(CommandHandler("feedback", feedback))
-        application.add_handler(CommandHandler("broadcast", broadcast))
-        application.add_handler(CommandHandler("addaccess", addaccess))
-        application.add_handler(CommandHandler("block", block))
-        application.add_handler(CommandHandler("unblock", unblock))
-        application.add_handler(CommandHandler("logs", logs))
-        application.add_handler(CommandHandler("analytics", analytics))
-        application.add_handler(CommandHandler("replyfeedback", replyfeedback))
-        application.add_handler(CommandHandler("exportusers", exportusers))
-        application.add_handler(CommandHandler("health", health))
-        application.add_handler(CommandHandler("sharecommands", sharecommands))
-        application.add_handler(MessageHandler(filters.Document.ALL, handle_document))
-        application.add_handler(CallbackQueryHandler(button_callback))
-        application.add_error_handler(error_handler)
+async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.message.from_user.id
+    if await check_blocked(user_id, update, context):
+        return
+    if user_id != ADMIN_ID:
+        await update.message.reply_text("❌ Only admin can broadcast.", parse_mode='Markdown')
+        return
 
-        # Broadcast online status
-        await broadcast_online_status(application)
+    if not context.args:
+        await update.message.reply_text("Usage: /broadcast <message>", parse_mode='Markdown')
+        return
 
-        # Start the bot
-        if USE_WEBHOOK:
-            logger.info(f"Starting bot with webhook on port {PORT}")
-            await application.run_webhook(
-                listen="0.0.0.0",
-                port=PORT,
-                url_path=BOT_TOKEN,
-                webhook_url=f"{WEBHOOK_URL}/{BOT_TOKEN}"
+    msg = " ".join(context.args)
+    authorized = load_authorized_users()
+    total_sent = 0
+
+    for uid in authorized:
+        for attempt in range(3):
+            try:
+                await context.bot.send_message(chat_id=uid, text=f"📢 Broadcast from {ADMIN_USERNAME}:\n\n{msg}", parse_mode='Markdown')
+                total_sent += 1
+                break
+            except telegram.error.BadRequest as e:
+                logger.error(f"Broadcast error to {uid}, attempt {attempt + 1}: {e}")
+                if attempt == 2:
+                    save_log("errors", {"user_id": uid, "error": f"Broadcast failed: {str(e)}"})
+                await asyncio.sleep(1)
+
+    await update.message.reply_text(f"Broadcast sent to {total_sent} users.", parse_mode='Markdown')
+
+async def addaccess(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.message.from_user.id
+    if await check_blocked(user_id, update, context):
+        return
+    if user_id != ADMIN_ID:
+        await update.message.reply_text("❌ Only admin can add access.", parse_mode='Markdown')
+        return
+
+    if len(context.args) != 2:
+        await update.message.reply_text("Usage: /addaccess <user_id> <count>", parse_mode='Markdown')
+        return
+
+    try:
+        target_user = int(context.args[0])
+        additional_count = int(context.args[1])
+        if additional_count <= 0:
+            await update.message.reply_text("❌ Count must be positive.", parse_mode='Markdown')
+            return
+
+        access_count = load_access_count()
+        user_data = access_count.get(str(target_user), {'count': 0, 'total_limit': 1})
+        current_count = user_data['count']
+        current_limit = user_data['total_limit']
+        new_limit = current_limit + additional_count
+
+        if save_access_count(target_user, current_count, new_limit):
+            await update.message.reply_text(
+                f"✅ Added {additional_count} searches for user {target_user}. New limit: {new_limit}",
+                parse_mode='Markdown'
+            )
+            save_log("access_update", {
+                "admin_id": user_id,
+                "target_user_id": target_user,
+                "additional_count": additional_count,
+                "new_limit": new_limit,
+                "timestamp": datetime.now().isoformat()
+            })
+            try:
+                await context.bot.send_message(
+                    chat_id=target_user,
+                    text=f"🎉 Good news! Your search limit has been increased by {additional_count}. New total limit: {new_limit}. Enjoy! 🚀",
+                    parse_mode='Markdown'
+                )
+            except telegram.error.BadRequest as e:
+                logger.error(f"Error notifying user {target_user} about access update: {e}")
+                save_log("errors", {"user_id": target_user, "error": f"Failed to notify user about access update: {str(e)}"})
+        else:
+            await update.message.reply_text("❌ Error updating access count.", parse_mode='Markdown')
+    except ValueError:
+        await update.message.reply_text("❌ Invalid user ID or count.", parse_mode='Markdown')
+    except Exception as e:
+        await update.message.reply_text(f"❌ Error: {str(e)}", parse_mode='Markdown')
+        save_log("errors", {"user_id": user_id, "error": f"Addaccess failed: {str(e)}"})
+
+async def block(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.message.from_user.id
+    if await check_blocked(user_id, update, context):
+        return
+    if user_id != ADMIN_ID:
+        await update.message.reply_text("❌ Only admin can block users.", parse_mode='Markdown')
+        return
+
+    if len(context.args) != 1:
+        await update.message.reply_text("Usage: /block <user_id>", parse_mode='Markdown')
+        return
+
+    try:
+        target_user = int(context.args[0])
+        if target_user == ADMIN_ID:
+            await update.message.reply_text("❌ Cannot block the admin!", parse_mode='Markdown')
+            return
+        save_blocked_user(target_user)
+        await update.message.reply_text(f"✅ User {target_user} blocked.", parse_mode='Markdown')
+        save_log("block_user", {
+            "admin_id": user_id,
+            "target_user_id": target_user,
+            "timestamp": datetime.now().isoformat()
+        })
+        try:
+            await context.bot.send_message(
+                chat_id=target_user,
+                text=f"🚫 Your access to sniper's Bot has been blocked. Contact {ADMIN_USERNAME} for assistance.",
+                parse_mode='Markdown'
+            )
+        except telegram.error.BadRequest as e:
+            logger.error(f"Error notifying user {target_user} about block: {e}")
+            save_log("errors", {"user_id": target_user, "error": f"Failed to notify user about block: {str(e)}"})
+    except ValueError:
+        await update.message.reply_text("❌ Invalid user ID.", parse_mode='Markdown')
+    except Exception as e:
+        await update.message.reply_text(f"❌ Error: {str(e)}", parse_mode='Markdown')
+        save_log("errors", {"user_id": user_id, "error": f"Block failed: {str(e)}"})
+
+async def unblock(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.message.from_user.id
+    if await check_blocked(user_id, update, context):
+        return
+    if user_id != ADMIN_ID:
+        await update.message.reply_text("❌ Only admin can unblock users.", parse_mode='Markdown')
+        return
+
+    if len(context.args) != 1:
+        await update.message.reply_text("Usage: /unblock <user_id>", parse_mode='Markdown')
+        return
+
+    try:
+        target_user = int(context.args[0])
+        remove_blocked_user(target_user)
+        await update.message.reply_text(f"✅ User {target_user} unblocked.", parse_mode='Markdown')
+        save_log("unblock_user", {
+            "admin_id": user_id,
+            "target_user_id": target_user,
+            "timestamp": datetime.now().isoformat()
+        })
+        try:
+            await context.bot.send_message(
+                chat_id=target_user,
+                text=f"🎉 Your access to sniper's Bot has been restored! Start using /help to see commands. 🚀",
+                parse_mode='Markdown'
+            )
+        except telegram.error.BadRequest as e:
+            logger.error(f"Error notifying user {target_user} about unblock: {e}")
+            save_log("errors", {"user_id": target_user, "error": f"Failed to notify user about unblock: {str(e)}"})
+    except ValueError:
+        await update.message.reply_text("❌ Invalid user ID.", parse_mode='Markdown')
+    except Exception as e:
+        await update.message.reply_text(f"❌ Error: {str(e)}", parse_mode='Markdown')
+        save_log("errors", {"user_id": user_id, "error": f"Unblock failed: {str(e)}"})
+
+async def logs(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.message.from_user.id
+    if await check_blocked(user_id, update, context):
+        return
+    if user_id != ADMIN_ID:
+        await update.message.reply_text("❌ Only admin can view logs.", parse_mode='Markdown')
+        return
+
+    logs = load_logs()
+    if not logs:
+        await update.message.reply_text("📜 No logs found.", parse_mode='Markdown')
+        return
+
+    log_text = "📜 *Recent Logs* (Last 100):\n\n"
+    for log in logs:
+        log_data = log['data']
+        log_type = log['type']
+        timestamp = log.get('readable_timestamp', log['timestamp'])
+        user_name = log_data.get('user_name', 'N/A')
+        user_username = log_data.get('user_username', 'N/A')
+        user_id = log_data.get('user_id', 'N/A')
+        action = log_data.get('action', 'N/A')
+        if log_type == "searches":
+            query = log_data.get('query', 'N/A')
+            column = log_data.get('column', 'N/A')
+            result_count = log_data.get('result_count', 0)
+            student_name = log_data.get('student_name', 'N/A')
+            log_text += (
+                f"[{timestamp}] 🔍 Search by {user_name} (@{user_username}, ID: {user_id})\n"
+                f"Query: {query} (in {column}), Results: {result_count}, Student: {student_name}\n\n"
+            )
+        elif log_type == "salary_downloads":
+            emp_id = log_data.get('emp_id', 'N/A')
+            filename = log_data.get('filename', 'N/A')
+            log_text += (
+                f"[{timestamp}] 📄 Salary Slip Download by {user_name} (@{user_username}, ID: {user_id})\n"
+                f"Employee ID: {emp_id}, File: {filename}\n\n"
+            )
+        elif log_type == "batch_downloads":
+            start_id = log_data.get('start_id', 'N/A')
+            end_id = log_data.get('end_id', 'N/A')
+            successful = log_data.get('successful', 0)
+            log_text += (
+                f"[{timestamp}] 📥 Batch Download by Admin (ID: {user_id})\n"
+                f"Range: {start_id}-{end_id}, Successful: {successful}\n\n"
+            )
+        elif log_type == "access_requests":
+            log_text += (
+                f"[{timestamp}] 🔐 Access Request by {user_name} (@{user_username}, ID: {user_id})\n\n"
+            )
+        elif log_type == "errors":
+            error = log_data.get('error', 'N/A')
+            log_text += (
+                f"[{timestamp}] ⚠️ Error for User ID: {user_id}\n"
+                f"Details: {error}\n\n"
+            )
+        elif log_type == "broadcast_commands":
+            total_sent = log_data.get('total_sent', 0)
+            failed_users = log_data.get('failed_users', [])
+            log_text += (
+                f"[{timestamp}] 📢 Command List Broadcast by Admin (ID: {user_id})\n"
+                f"Sent to: {total_sent} users, Failed: {len(failed_users)}\n\n"
+            )
+        elif log_type == "online_broadcast":
+            total_sent = log_data.get('total_sent', 0)
+            failed_users = log_data.get('failed_users', [])
+            log_text += (
+                f"[{timestamp}] 🚀 Online Status Broadcast\n"
+                f"Sent to: {total_sent} users, Failed: {len(failed_users)}\n\n"
             )
         else:
-            logger.info("Starting bot with polling")
-            await application.run_polling()
+            log_text += f"[{timestamp}] {log_type}: {action}\n\n"
+
+    await update.message.reply_text(log_text, parse_mode='Markdown')
+
+async def analytics(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.message.from_user.id
+    if await check_blocked(user_id, update, context):
+        return
+    if user_id != ADMIN_ID:
+        await update.message.reply_text("❌ Only admin can view analytics.", parse_mode='Markdown')
+        return
+
+    try:
+        access_count = load_access_count()
+        authorized = load_authorized_users()
+        logs = load_logs()
+        feedback = load_feedback()
+
+        total_users = len(authorized)
+        total_searches = sum(data['count'] for data in access_count.values())
+        search_logs = [log for log in logs if log['type'] == 'searches']
+        total_salary_downloads = len([log for log in logs if log['type'] == 'salary_downloads'])
+        total_batch_downloads = len([log for log in logs if log['type'] == 'batch_downloads'])
+        total_feedback = len(feedback)
+
+        user_stats = []
+        for uid, data in access_count.items():
+            user_info = authorized.get(int(uid), {'name': 'N/A', 'username': 'N/A'})
+            user_stats.append(
+                f"👤 {user_info['name']} (@{user_info['username']}, ID: {uid})\n"
+                f"🔎 Searches: {data['count']}/{data['total_limit']} (Remaining: {max(0, data['total_limit'] - data['count'])})\n"
+            )
+
+        analytics_text = (
+            f"📊 *Bot Analytics* 📊\n\n"
+            f"👥 Total Authorized Users: {total_users}\n"
+            f"🔍 Total Searches: {total_searches}\n"
+            f"📄 Total Salary Slip Downloads: {total_salary_downloads}\n"
+            f"📥 Total Batch Downloads: {total_batch_downloads}\n"
+            f"📝 Total Feedback Entries: {total_feedback}\n\n"
+            f"👤 *User Stats*:\n" + "\n".join(user_stats) if user_stats else "No user stats available."
+        )
+        await update.message.reply_text(analytics_text, parse_mode='Markdown')
+        save_log("analytics", {
+            "admin_id": user_id,
+            "total_users": total_users,
+            "total_searches": total_searches,
+            "total_salary_downloads": total_salary_downloads,
+            "total_batch_downloads": total_batch_downloads,
+            "total_feedback": total_feedback,
+            "timestamp": datetime.now().isoformat()
+        })
+    except Exception as e:
+        await update.message.reply_text(f"❌ Error fetching analytics: {str(e)}", parse_mode='Markdown')
+        save_log("errors", {"user_id": user_id, "error": f"Analytics failed: {str(e)}"})
+
+async def replyfeedback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.message.from_user.id
+    if await check_blocked(user_id, update, context):
+        return
+    if user_id != ADMIN_ID:
+        await update.message.reply_text("❌ Only admin can reply to feedback.", parse_mode='Markdown')
+        return
+
+    if len(context.args) < 2:
+        await update.message.reply_text("Usage: /replyfeedback <user_id> <message>", parse_mode='Markdown')
+        return
+
+    try:
+        target_user = int(context.args[0])
+        msg = " ".join(context.args[1:])
+        await context.bot.send_message(
+            chat_id=target_user,
+            text=f"📩 *Reply from {ADMIN_USERNAME}:*\n\n{msg}",
+            parse_mode='Markdown'
+        )
+        await update.message.reply_text(f"✅ Reply sent to user {target_user}.", parse_mode='Markdown')
+        save_log("feedback_reply", {
+            "admin_id": user_id,
+            "target_user_id": target_user,
+            "message": msg,
+            "timestamp": datetime.now().isoformat()
+        })
+    except ValueError:
+        await update.message.reply_text("❌ Invalid user ID.", parse_mode='Markdown')
+    except telegram.error.BadRequest as e:
+        await update.message.reply_text(f"❌ Failed to send reply: {str(e)}", parse_mode='Markdown')
+        save_log("errors", {"user_id": user_id, "error": f"Replyfeedback failed: {str(e)}"})
+    except Exception as e:
+        await update.message.reply_text(f"❌ Error: {str(e)}", parse_mode='Markdown')
+        save_log("errors", {"user_id": user_id, "error": f"Replyfeedback failed: {str(e)}"})
+
+async def exportusers(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.message.from_user.id
+    if await check_blocked(user_id, update, context):
+        return
+    if user_id != ADMIN_ID:
+        await update.message.reply_text("❌ Only admin can export users.", parse_mode='Markdown')
+        return
+
+    try:
+        authorized = load_authorized_users()
+        access_count = load_access_count()
+        user_data = []
+        for uid in authorized:
+            data = access_count.get(str(uid), {'count': 0, 'total_limit': 1})
+            user_data.append({
+                'user_id': uid,
+                'name': authorized[uid]['name'],
+                'username': authorized[uid]['username'],
+                'searches_used': data['count'],
+                'total_limit': data['total_limit'],
+                'remaining': max(0, data['total_limit'] - data['count'])
+            })
+        
+        df_users = pd.DataFrame(user_data)
+        output = io.StringIO()
+        df_users.to_csv(output, index=False)
+        output.seek(0)
+        file_name = f"authorized_users_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
+        await update.message.reply_document(
+            document=InputFile(output, filename=file_name),
+            caption="📊 Exported authorized users."
+        )
+        save_log("export_users", {
+            "admin_id": user_id,
+            "total_users": len(user_data),
+            "timestamp": datetime.now().isoformat()
+        })
+    except Exception as e:
+        await update.message.reply_text(f"❌ Error exporting users: {str(e)}", parse_mode='Markdown')
+        save_log("errors", {"user_id": user_id, "error": f"Exportusers failed: {str(e)}"})
+
+async def health(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.message.from_user.id
+    if await check_blocked(user_id, update, context):
+        return
+    if user_id != ADMIN_ID:
+        await update.message.reply_text("❌ Only admin can check health.", parse_mode='Markdown')
+        return
+
+    try:
+        mongo_manager.ensure_connection()
+        db_status = "✅ Connected" if mongo_manager.client.admin.command('ping') else "❌ Disconnected"
+        excel_files = get_excel_files()
+        dataframe_status = f"Rows: {len(df)}, Columns: {list(df.columns) if not df.empty else 'None'}"
+        authorized = load_authorized_users()
+        blocked = load_blocked_users()
+        access_count = load_access_count()
+
+        health_text = (
+            f"🏥 *Bot Health Check* 🏥\n\n"
+            f"🗄 *MongoDB*: {db_status}\n"
+            f"📄 *Excel Files*: {len(excel_files)} files\n"
+            f"📊 *DataFrame*: {dataframe_status}\n"
+            f"👥 *Authorized Users*: {len(authorized)}\n"
+            f"🚫 *Blocked Users*: {len(blocked)}\n"
+            f"🔎 *Total Searches*: {sum(data['count'] for data in access_count.values())}\n"
+            f"📝 *Recent Logs*: {len(load_logs())} entries\n"
+            f"📩 *Feedback Entries*: {len(load_feedback())}"
+        )
+        await update.message.reply_text(health_text, parse_mode='Markdown')
+        save_log("health_check", {
+            "admin_id": user_id,
+            "db_status": db_status,
+            "excel_files": len(excel_files),
+            "dataframe_rows": len(df),
+            "authorized_users": len(authorized),
+            "blocked_users": len(blocked),
+            "timestamp": datetime.now().isoformat()
+        })
+    except Exception as e:
+        await update.message.reply_text(f"❌ Health check failed: {str(e)}", parse_mode='Markdown')
+        save_log("errors", {"user_id": user_id, "error": f"Health check failed: {str(e)}"})
+
+async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    user_id = query.from_user.id
+    data = query.data
+
+    if await check_blocked(user_id, update, context):
+        return
+
+    try:
+        if data.startswith("approve_"):
+            if user_id != ADMIN_ID:
+                await query.message.reply_text("❌ Only admin can approve users.", parse_mode='Markdown')
+                return
+            target_user = int(data.split("_")[1])
+            authorized = load_authorized_users()
+            if target_user in authorized:
+                await query.message.reply_text(f"✅ User {target_user} already authorized.", parse_mode='Markdown')
+                return
+            user_doc = get_db().users_collection.find_one({'user_id': target_user})
+            if not user_doc:
+                await query.message.reply_text(f"❌ User {target_user} not found in request list.", parse_mode='Markdown')
+                return
+            save_authorized_user(target_user, user_doc.get('user_name', 'N/A'), user_doc.get('user_username', 'N/A'))
+            save_access_count(target_user, 0, 1)
+            await query.message.reply_text(f"✅ User {target_user} authorized with 1 search.", parse_mode='Markdown')
+            await context.bot.send_message(
+                chat_id=target_user,
+                text=f"🎉 Your access to sniper's Bot has been approved! Start with /help to see commands. 🚀",
+                parse_mode='Markdown'
+            )
+            save_log("user_approved", {
+                "admin_id": user_id,
+                "target_user_id": target_user,
+                "timestamp": datetime.now().isoformat()
+            })
+            await query.message.delete()
+
+        elif data.startswith("reject_"):
+            if user_id != ADMIN_ID:
+                await query.message.reply_text("❌ Only admin can reject users.", parse_mode='Markdown')
+                return
+            target_user = int(data.split("_")[1])
+            await context.bot.send_message(
+                chat_id=target_user,
+                text=f"❌ Your access request to sniper's Bot was rejected. Contact {ADMIN_USERNAME} for details.",
+                parse_mode='Markdown'
+            )
+            get_db().users_collection.delete_one({'user_id': target_user})
+            await query.message.reply_text(f"❌ User {target_user} rejected.", parse_mode='Markdown')
+            save_log("user_rejected", {
+                "admin_id": user_id,
+                "target_user_id": target_user,
+                "timestamp": datetime.now().isoformat()
+            })
+            await query.message.delete()
+
+        elif data.startswith("select_"):
+            results = context.user_data.get('search_results', [])
+            index = int(data.split("_")[1])
+            if index < 0 or index >= len(results):
+                await query.message.reply_text("❌ Invalid selection.", parse_mode='Markdown')
+                return
+            record = results[index]
+            formatted_sections = format_student_record(record)
+            for section in formatted_sections:
+                await query.message.reply_text(section, parse_mode='Markdown')
+            if user_id != ADMIN_ID:
+                access_count = load_access_count()
+                user_data = access_count.get(str(user_id), {'count': 0, 'total_limit': 1})
+                count = user_data['count']
+                total_limit = user_data['total_limit']
+                if count < total_limit:
+                    save_access_count(user_id, count + 1, total_limit)
+                    logger.info(f"Incremented search count for user {user_id} to {count + 1}/{total_limit} for selected result")
+            await notify_admin_search(
+                context, 
+                user_id, 
+                query.from_user.username or 'N/A', 
+                context.user_data.get('search_query', 'N/A'), 
+                context.user_data.get('search_column', 'N/A'), 
+                record, 
+                is_full_record=True
+            )
+            save_log("searches", {
+                "user_id": user_id,
+                "user_name": query.from_user.full_name,
+                "user_username": query.from_user.username or 'N/A',
+                "query": context.user_data.get('search_query', 'N/A'),
+                "column": context.user_data.get('search_column', 'N/A'),
+                "student_name": record.get('Name', 'Unknown'),
+                "result_count": 1,
+                "timestamp": datetime.now().isoformat()
+            })
+
+        elif data.startswith("page_"):
+            context.user_data['current_page'] = int(data.split("_")[1])
+            await send_paginated_results(update, context)
+
+    except Exception as e:
+        await query.message.reply_text(f"❌ Error processing action: {str(e)}", parse_mode='Markdown')
+        save_log("errors", {"user_id": user_id, "error": f"Button callback failed: {str(e)}"})
+
+async def main():
+    try:
+        logger.info("Starting bot with polling")
+        app = ApplicationBuilder().token(BOT_TOKEN).build()
+
+        # Register handlers
+        app.add_handler(CommandHandler("start", start))
+        app.add_handler(CommandHandler("help", help_command))
+        app.add_handler(CommandHandler("name", search_name))
+        app.add_handler(CommandHandler("email", search_email))
+        app.add_handler(CommandHandler("phone", search_phone))
+        app.add_handler(CommandHandler("downloadone", download_one))
+        app.add_handler(CommandHandler("downloadall", download_all))
+        app.add_handler(CommandHandler("listexcel", listexcel))
+        app.add_handler(CommandHandler("reload", reload))
+        app.add_handler(CommandHandler("profile", profile))
+        app.add_handler(CommandHandler("userinfo", userinfo))
+        app.add_handler(CommandHandler("feedback", feedback))
+        app.add_handler(CommandHandler("broadcast", broadcast))
+        app.add_handler(CommandHandler("addaccess", addaccess))
+        app.add_handler(CommandHandler("block", block))
+        app.add_handler(CommandHandler("unblock", unblock))
+        app.add_handler(CommandHandler("logs", logs))
+        app.add_handler(CommandHandler("analytics", analytics))
+        app.add_handler(CommandHandler("replyfeedback", replyfeedback))
+        app.add_handler(CommandHandler("exportusers", exportusers))
+        app.add_handler(CommandHandler("health", health))
+        app.add_handler(CommandHandler("sharecommands", sharecommands))
+        app.add_handler(MessageHandler(DOCUMENT_FILTER, handle_document))
+        app.add_handler(CallbackQueryHandler(button_callback))
+
+        global user_list, blocked_users
+        user_list = set(load_authorized_users().keys())
+        blocked_users = load_blocked_users()
+        load_excel_on_startup()
+
+        await broadcast_online_status(app)
+        logger.info(f"Bot initialized with {len(user_list)} authorized users and {len(blocked_users)} blocked users")
+        await app.run_polling(allowed_updates=Update.ALL_TYPES)
 
     except Exception as e:
         logger.error(f"Error in main: {str(e)}")
         save_log("errors", {"error": f"Main function failed: {str(e)}", "timestamp": datetime.now().isoformat()})
         raise
-    finally:
-        if application:
-            try:
-                await application.shutdown()
-                logger.info("Application shutdown completed")
-            except Exception as e:
-                logger.error(f"Error during application shutdown: {str(e)}")
-                save_log("errors", {"error": f"Application shutdown failed: {str(e)}", "timestamp": datetime.now().isoformat()})
 
 if __name__ == '__main__':
     asyncio.run(main())
