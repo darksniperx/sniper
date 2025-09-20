@@ -32,13 +32,17 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Check python-telegram-bot version
+
 try:
     telegram_version = importlib.metadata.version("python-telegram-bot")
     logger.info(f"Using python-telegram-bot version: {telegram_version}")
-    DOCUMENT_FILTER = filters.Document.ALL
+    if telegram_version.startswith("22."):
+        DOCUMENT_FILTER = filters.Document.ALL
+    else:
+        raise ImportError(f"Unsupported python-telegram-bot version. Expected ~22.4, got {telegram_version}")
 except Exception as e:
     logger.error(f"Error: python-telegram-bot not installed correctly: {e}")
-    raise ImportError("Please install python-telegram-bot==20.7")
+    raise ImportError("Please install python-telegram-bot==22.4")
 
 # CONFIG - Validate environment variables
 def get_env_var(name: str, default: Optional[str] = None) -> str:
@@ -1852,7 +1856,22 @@ async def main():
 
         await broadcast_online_status(app)
         logger.info(f"Bot initialized with {len(user_list)} authorized users and {len(blocked_users)} blocked users")
-        await app.run_polling(allowed_updates=Update.ALL_TYPES)
+        
+        # Start polling
+        await app.initialize()
+        await app.start()
+        await app.updater.start_polling(allowed_updates=Update.ALL_TYPES)
+        
+        # Keep the bot running until interrupted
+        try:
+            while True:
+                await asyncio.sleep(3600)  # Sleep to prevent tight loop
+        except (KeyboardInterrupt, SystemExit):
+            logger.info("Received shutdown signal")
+            await app.updater.stop()
+            await app.stop()
+            await app.shutdown()
+            logger.info("Bot shutdown completed")
 
     except Exception as e:
         logger.error(f"Error in main: {str(e)}")
@@ -1860,4 +1879,15 @@ async def main():
         raise
 
 if __name__ == '__main__':
-    asyncio.run(main())
+    # Get or create the event loop
+    loop = asyncio.get_event_loop()
+    if loop.is_closed():
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+    try:
+        loop.run_until_complete(main())
+    finally:
+        # Ensure proper cleanup
+        if not loop.is_closed():
+            loop.run_until_complete(loop.shutdown_asyncgens())
+            loop.close()
