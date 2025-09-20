@@ -1634,6 +1634,98 @@ async def health(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "recent_logs": recent_logs,
         "timestamp": datetime.now().isoformat()
     })
+async def exportusers(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.message.from_user.id
+    if await check_blocked(user_id, update, context):
+        return
+    if user_id != ADMIN_ID:
+        await update.message.reply_text("❌ Only admin can export users.")
+        return
+
+    try:
+        authorized = load_authorized_users()
+        access_count = load_access_count()
+        export_data = []
+        for uid, info in authorized.items():
+            user_data = access_count.get(str(uid), {'count': 0, 'total_limit': 1})
+            export_data.append({
+                'user_id': uid,
+                'name': info['name'],
+                'username': info['username'],
+                'searches_used': user_data['count'],
+                'total_limit': user_data['total_limit']
+            })
+
+        export_file = io.StringIO()
+        export_df = pd.DataFrame(export_data)
+        export_df.to_csv(export_file, index=False)
+        export_file.seek(0)
+        filename = f"users_export_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
+        await update.message.reply_document(
+            document=InputFile(export_file, filename=filename),
+            caption=f"📊 Exported {len(export_data)} authorized users."
+        )
+        save_log("export_users", {
+            "admin_id": user_id,
+            "total_users": len(export_data),
+            "filename": filename,
+            "timestamp": datetime.now().isoformat()
+        })
+    except Exception as e:
+        logger.error(f"Error in exportusers for user {user_id}: {str(e)}")
+        await update.message.reply_text(f"❌ Error exporting users: {str(e)}")
+        save_log("errors", {"user_id": user_id, "error": f"Exportusers failed: {str(e)}"})
+
+async def health(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.message.from_user.id
+    if await check_blocked(user_id, update, context):
+        return
+    if user_id != ADMIN_ID:
+        await update.message.reply_text("❌ Only admin can check bot health.")
+        return
+
+    try:
+        # Check MongoDB connection
+        mongo_manager.client.admin.command('ping')
+        mongo_status = "✅ Connected"
+    except Exception as e:
+        mongo_status = f"❌ Disconnected: {str(e)}"
+
+    # Check DataFrame
+    df_status = f"✅ {len(df)} rows, {len(df.columns)} columns" if not df.empty else "❌ Empty"
+
+    # Check authorized users
+    authorized = load_authorized_users()
+    auth_status = f"✅ {len(authorized)} users" if authorized else "❌ No users"
+
+    # Check blocked users
+    blocked = load_blocked_users()
+    blocked_status = f"✅ {len(blocked)} users" if blocked is not None else "❌ Failed to load"
+
+    # Check recent logs
+    logs = load_logs()
+    recent_logs = len([log for log in logs if (datetime.now() - datetime.fromisoformat(log['timestamp'])).total_seconds() < 3600])
+
+    health_text = (
+        f"🏥 *Bot Health Check* 🏥\n\n"
+        f"🤖 Bot Status: ✅ Running\n"
+        f"📡 MongoDB: {mongo_status}\n"
+        f"📊 DataFrame: {df_status}\n"
+        f"👥 Authorized Users: {auth_status}\n"
+        f"🚫 Blocked Users: {blocked_status}\n"
+        f"📜 Logs in Last Hour: {recent_logs}\n"
+        f"⏰ Last Checked: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+    )
+    await update.message.reply_text(health_text, parse_mode='Markdown')
+    save_log("health_check", {
+        "admin_id": user_id,
+        "mongo_status": mongo_status,
+        "df_status": df_status,
+        "auth_status": auth_status,
+        "blocked_status": blocked_status,
+        "recent_logs": recent_logs,
+        "timestamp": datetime.now().isoformat()
+    })
     except Exception as e:
         logger.error(f"Error in health for user {user_id}: {str(e)}")
         await update.message.reply_text(f"❌ Error checking health: {str(e)}")
@@ -1649,11 +1741,11 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     data = query.data
     logger.info(f"Callback query from user {user_id}: {data}")
 
-    if data.startswith("approve_"):
-        if user_id != ADMIN_ID:
-            await query.message.reply_text("❌ Only admin can approve users.")
-            return
-        try:
+    try:
+        if data.startswith("approve_"):
+            if user_id != ADMIN_ID:
+                await query.message.reply_text("❌ Only admin can approve users.")
+                return
             target_user = int(data.split("_")[1])
             authorized = load_authorized_users()
             if target_user in authorized:
@@ -1672,21 +1764,11 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "target_user_id": target_user,
                 "timestamp": datetime.now().isoformat()
             })
-        except telegram.error.Forbidden as e:
-            await query.message.reply_text(f"❌ Failed to approve user {target_user}: Bot is blocked by user.")
-            save_log("errors", {"user_id": target_user, "error": f"Failed to approve user: {str(e)}"})
-        except telegram.error.BadRequest as e:
-            await query.message.reply_text(f"❌ Failed to approve user {target_user}: {str(e)}")
-            save_log("errors", {"user_id": target_user, "error": f"Failed to approve user: {str(e)}"})
-        except Exception as e:
-            await query.message.reply_text(f"❌ Error approving user: {str(e)}")
-            save_log("errors", {"user_id": target_user, "error": f"Approve user failed: {str(e)}"})
 
-    elif data.startswith("reject_"):
-        if user_id != ADMIN_ID:
-            await query.message.reply_text("❌ Only admin can reject users.")
-            return
-        try:
+        elif data.startswith("reject_"):
+            if user_id != ADMIN_ID:
+                await query.message.reply_text("❌ Only admin can reject users.")
+                return
             target_user = int(data.split("_")[1])
             await context.bot.send_message(
                 chat_id=target_user,
@@ -1698,26 +1780,12 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "target_user_id": target_user,
                 "timestamp": datetime.now().isoformat()
             })
-        except telegram.error.Forbidden as e:
-            await query.message.reply_text(f"❌ Failed to reject user {target_user}: Bot is blocked by user.")
-            save_log("errors", {"user_id": target_user, "error": f"Failed to reject user: {str(e)}"})
-        except telegram.error.BadRequest as e:
-            await query.message.reply_text(f"❌ Failed to reject user {target_user}: {str(e)}")
-            save_log("errors", {"user_id": target_user, "error": f"Failed to reject user: {str(e)}"})
-        except Exception as e:
-            await query.message.reply_text(f"❌ Error rejecting user: {str(e)}")
-            save_log("errors", {"user_id": target_user, "error": f"Reject user failed: {str(e)}"})
 
-    elif data.startswith("page_"):
-        try:
+        elif data.startswith("page_"):
             context.user_data['current_page'] = int(data.split("_")[1])
             await send_paginated_results(update, context)
-        except ValueError:
-            await query.message.reply_text("❌ Invalid page number.")
-            save_log("errors", {"user_id": user_id, "error": "Invalid page number in button callback"})
 
-    elif data.startswith("select_"):
-        try:
+        elif data.startswith("select_"):
             idx = int(data.split("_")[1])
             results = context.user_data.get('search_results', [])
             if idx < 0 or idx >= len(results):
@@ -1756,12 +1824,19 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "result_count": 1,
                 "timestamp": datetime.now().isoformat()
             })
-        except ValueError:
-            await query.message.reply_text("❌ Invalid selection index.")
-            save_log("errors", {"user_id": user_id, "error": "Invalid selection index in button callback"})
-        except Exception as e:
-            await query.message.reply_text(f"❌ Error processing selection: {str(e)}")
-            save_log("errors", {"user_id": user_id, "error": f"Select result failed: {str(e)}"})
+
+    except telegram.error.Forbidden as e:
+        await query.message.reply_text(f"❌ Action failed: Bot is blocked by user.")
+        save_log("errors", {"user_id": user_id, "error": f"Button callback failed: {str(e)}"})
+    except telegram.error.BadRequest as e:
+        await query.message.reply_text(f"❌ Action failed: {str(e)}")
+        save_log("errors", {"user_id": user_id, "error": f"Button callback failed: {str(e)}"})
+    except ValueError as e:
+        await query.message.reply_text("❌ Invalid input in callback.")
+        save_log("errors", {"user_id": user_id, "error": f"Button callback failed: {str(e)}"})
+    except Exception as e:
+        await query.message.reply_text(f"❌ Error processing callback: {str(e)}")
+        save_log("errors", {"user_id": user_id, "error": f"Button callback failed: {str(e)}"})
 
 async def send_paginated_results(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
@@ -1803,6 +1878,14 @@ async def send_paginated_results(update: Update, context: ContextTypes.DEFAULT_T
             await update.callback_query.edit_message_text(summary_text, reply_markup=keyboard, parse_mode='Markdown')
         else:
             await update.message.reply_text(summary_text, reply_markup=keyboard, parse_mode='Markdown')
+    except telegram.error.Forbidden as e:
+        logger.error(f"Error sending paginated results: Bot blocked by user")
+        await update.effective_message.reply_text("❌ Error: Bot is blocked by user.")
+        save_log("errors", {"error": f"Failed to send paginated results: {str(e)}"})
+    except telegram.error.BadRequest as e:
+        logger.error(f"Error sending paginated results: {str(e)}")
+        await update.effective_message.reply_text(f"❌ Error displaying results: {str(e)}")
+        save_log("errors", {"error": f"Failed to send paginated results: {str(e)}"})
     except Exception as e:
         logger.error(f"Error sending paginated results: {str(e)}")
         await update.effective_message.reply_text(f"❌ Error displaying results: {str(e)}")
