@@ -1748,59 +1748,148 @@ async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"❌ An error occurred. Contact {ADMIN_USERNAME} for assistance."
         )
 
+async def broadcast_online_status(application):
+    authorized = load_authorized_users()
+    total_sent = 0
+    failed_users = []
+    online_message = (
+        "🚀 *sniper's Bot is BACK ONLINE!* 🔥\n\n"
+        "Your ultimate bot is ready to roll! 💪\n"
+        "Use these commands to unleash its power:\n\n"
+        "🔐 /start - Request access\n"
+        "🔍 /name <query> - Search by name\n"
+        "📧 /email <query> - Search by email\n"
+        "📱 /phone <query> - Search by phone\n"
+        "📄 /downloadone <id> (8000-9600) - Grab a salary slip (unlimited!) 💥\n"
+        "📊 /profile - Check your usage stats\n"
+        "📝 /feedback <message> - Drop your thoughts\n"
+        "ℹ️ /help - Get the command list\n\n"
+        f"🤖 *Powered by {ADMIN_USERNAME}* - Stay sharp! 🦅"
+    )
+
+    for uid in authorized:
+        for attempt in range(3):
+            try:
+                await application.bot.send_message(
+                    chat_id=uid,
+                    text=online_message,
+                    parse_mode='Markdown'
+                )
+                total_sent += 1
+                logger.info(f"Sent online status to user {uid}")
+                break
+            except telegram.error.Forbidden as e:
+                logger.warning(f"User {uid} blocked the bot: {str(e)}")
+                failed_users.append(uid)
+                save_log("errors", {
+                    "user_id": uid,
+                    "error": f"Failed to send online status: {str(e)}",
+                    "timestamp": datetime.now().isoformat()
+                })
+                break  # Skip retrying for this user
+            except telegram.error.BadRequest as e:
+                logger.error(f"Error sending online status to {uid}, attempt {attempt + 1}: {e}")
+                if attempt == 2:
+                    failed_users.append(uid)
+                    save_log("errors", {
+                        "user_id": uid,
+                        "error": f"Failed to send online status: {str(e)}",
+                        "timestamp": datetime.now().isoformat()
+                    })
+                await asyncio.sleep(1)
+            except Exception as e:
+                logger.error(f"Unexpected error sending online status to {uid}, attempt {attempt + 1}: {e}")
+                if attempt == 2:
+                    failed_users.append(uid)
+                    save_log("errors", {
+                        "user_id": uid,
+                        "error": f"Unexpected error sending online status: {str(e)}",
+                        "timestamp": datetime.now().isoformat()
+                    })
+                await asyncio.sleep(1)
+
+    logger.info(f"Online status broadcast sent to {total_sent} users. Failed: {len(failed_users)}")
+    save_log("online_broadcast", {
+        "total_sent": total_sent,
+        "failed_users": failed_users,
+        "timestamp": datetime.now().isoformat()
+    })
+    try:
+        await application.bot.send_message(
+            chat_id=ADMIN_ID,
+            text=f"📢 Online status broadcast completed: {total_sent} users reached, {len(failed_users)} failed."
+        )
+    except Exception as e:
+        logger.error(f"Failed to notify admin about broadcast completion: {str(e)}")
+        save_log("errors", {
+            "user_id": ADMIN_ID,
+            "error": f"Failed to notify admin about broadcast: {str(e)}",
+            "timestamp": datetime.now().isoformat()
+        })
+
 # Main function to set up and run the bot
 async def main():
-    try:
-        global df
-        df = load_all_excels()
-        application = ApplicationBuilder().token(BOT_TOKEN).build()
+    while True:
+        try:
+            global df
+            df = load_all_excels()
+            application = ApplicationBuilder().token(BOT_TOKEN).build()
 
-        # Register command handlers
-        application.add_handler(CommandHandler("start", start))
-        application.add_handler(CommandHandler("help", help_command))
-        application.add_handler(CommandHandler("name", search_name))
-        application.add_handler(CommandHandler("email", search_email))
-        application.add_handler(CommandHandler("phone", search_phone))
-        application.add_handler(CommandHandler("downloadone", download_one))
-        application.add_handler(CommandHandler("downloadall", download_all))
-        application.add_handler(CommandHandler("listexcel", listexcel))
-        application.add_handler(CommandHandler("reload", reload))
-        application.add_handler(CommandHandler("profile", profile))
-        application.add_handler(CommandHandler("userinfo", userinfo))
-        application.add_handler(CommandHandler("feedback", feedback))
-        application.add_handler(CommandHandler("broadcast", broadcast))
-        application.add_handler(CommandHandler("addaccess", addaccess))
-        application.add_handler(CommandHandler("block", block))
-        application.add_handler(CommandHandler("unblock", unblock))
-        application.add_handler(CommandHandler("logs", logs))
-        application.add_handler(CommandHandler("analytics", analytics))
-        application.add_handler(CommandHandler("replyfeedback", replyfeedback))
-        application.add_handler(CommandHandler("exportusers", exportusers))
-        application.add_handler(CommandHandler("health", health))
-        application.add_handler(CommandHandler("sharecommands", sharecommands))
-        application.add_handler(MessageHandler(DOCUMENT_FILTER, handle_document))
-        application.add_handler(CallbackQueryHandler(button_callback))
-        application.add_error_handler(error_handler)
+            # Register command handlers
+            application.add_handler(CommandHandler("start", start))
+            application.add_handler(CommandHandler("help", help_command))
+            application.add_handler(CommandHandler("name", search_name))
+            application.add_handler(CommandHandler("email", search_email))
+            application.add_handler(CommandHandler("phone", search_phone))
+            application.add_handler(CommandHandler("downloadone", download_one))
+            application.add_handler(CommandHandler("downloadall", download_all))
+            application.add_handler(CommandHandler("listexcel", listexcel))
+            application.add_handler(CommandHandler("reload", reload))
+            application.add_handler(CommandHandler("profile", profile))
+            application.add_handler(CommandHandler("userinfo", userinfo))
+            application.add_handler(CommandHandler("feedback", feedback))
+            application.add_handler(CommandHandler("broadcast", broadcast))
+            application.add_handler(CommandHandler("addaccess", addaccess))
+            application.add_handler(CommandHandler("block", block))
+            application.add_handler(CommandHandler("unblock", unblock))
+            application.add_handler(CommandHandler("logs", logs))
+            application.add_handler(CommandHandler("analytics", analytics))
+            application.add_handler(CommandHandler("replyfeedback", replyfeedback))
+            application.add_handler(CommandHandler("exportusers", exportusers))
+            application.add_handler(CommandHandler("health", health))
+            application.add_handler(CommandHandler("sharecommands", sharecommands))
+            application.add_handler(MessageHandler(DOCUMENT_FILTER, handle_document))
+            application.add_handler(CallbackQueryHandler(button_callback))
+            application.add_handler(error_handler)
 
-        # Broadcast online status
-        await broadcast_online_status(application)
+            # Broadcast online status
+            await broadcast_online_status(application)
 
-        # Start the bot
-        if USE_WEBHOOK:
-            logger.info(f"Starting bot with webhook on port {PORT}")
-            await application.run_webhook(
-                listen="0.0.0.0",
-                port=PORT,
-                url_path=BOT_TOKEN,
-                webhook_url=f"{WEBHOOK_URL}/{BOT_TOKEN}"
-            )
-        else:
-            logger.info("Starting bot with polling")
-            await application.run_polling()
+            # Start the bot
+            if USE_WEBHOOK:
+                logger.info(f"Starting bot with webhook on port {PORT}")
+                await application.run_webhook(
+                    listen="0.0.0.0",
+                    port=PORT,
+                    url_path=BOT_TOKEN,
+                    webhook_url=f"{WEBHOOK_URL}/{BOT_TOKEN}"
+                )
+            else:
+                logger.info("Starting bot with polling")
+                await application.run_polling()
 
-    except Exception as e:
-        logger.error(f"Error in main: {str(e)}")
-        save_log("errors", {"error": f"Main function failed: {str(e)}"})
+        except telegram.error.Forbidden as e:
+            logger.error(f"Forbidden error in main: {str(e)}")
+            save_log("errors", {"error": f"Main function failed: {str(e)}", "timestamp": datetime.now().isoformat()})
+            logger.info(f"BOT STOPPED at {datetime.now().strftime('%a %d %b %Y %I:%M:%S %p UTC')} — restarting in 5s")
+            await asyncio.sleep(5)
+            continue
+        except Exception as e:
+            logger.error(f"Error in main: {str(e)}")
+            save_log("errors", {"error": f"Main function failed: {str(e)}", "timestamp": datetime.now().isoformat()})
+            logger.info(f"BOT STOPPED at {datetime.now().strftime('%a %d %b %Y %I:%M:%S %p UTC')} — restarting in 5s")
+            await asyncio.sleep(5)
+            continue
 
 if __name__ == '__main__':
     asyncio.run(main())
