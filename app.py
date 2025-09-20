@@ -1693,28 +1693,33 @@ def main():
         app = ApplicationBuilder().token(BOT_TOKEN).build()
 
         # Register command handlers
-        app.add_handler(CommandHandler("start", start))
-        app.add_handler(CommandHandler("help", help_command))
-        app.add_handler(CommandHandler("sharecommands", sharecommands))
-        app.add_handler(CommandHandler("listexcel", listexcel))
-        app.add_handler(CommandHandler("reload", reload))
-        app.add_handler(CommandHandler("profile", profile))
-        app.add_handler(CommandHandler("userinfo", userinfo))
-        app.add_handler(CommandHandler("feedback", feedback))
-        app.add_handler(CommandHandler("name", search_name))
-        app.add_handler(CommandHandler("email", search_email))
-        app.add_handler(CommandHandler("phone", search_phone))
-        app.add_handler(CommandHandler("downloadone", download_one))
-        app.add_handler(CommandHandler("downloadall", download_all))
-        app.add_handler(CommandHandler("broadcast", broadcast))
-        app.add_handler(CommandHandler("addaccess", addaccess))
-        app.add_handler(CommandHandler("block", block))
-        app.add_handler(CommandHandler("unblock", unblock))
-        app.add_handler(CommandHandler("logs", logs))
-        app.add_handler(CommandHandler("analytics", analytics))
-        app.add_handler(CommandHandler("replyfeedback", replyfeedback))
-        app.add_handler(CommandHandler("exportusers", exportusers))
-        app.add_handler(CommandHandler("health", health))
+        handlers = [
+            ("start", start),
+            ("help", help_command),
+            ("sharecommands", sharecommands),
+            ("listexcel", listexcel),
+            ("reload", reload),
+            ("profile", profile),
+            ("userinfo", userinfo),
+            ("feedback", feedback),
+            ("name", search_name),
+            ("email", search_email),
+            ("phone", search_phone),
+            ("downloadone", download_one),
+            ("downloadall", download_all),
+            ("broadcast", broadcast),
+            ("addaccess", addaccess),
+            ("block", block),
+            ("unblock", unblock),
+            ("logs", logs),
+            ("analytics", analytics),
+            ("replyfeedback", replyfeedback),
+            ("exportusers", exportusers),
+            ("health", health)
+        ]
+        for command, handler in handlers:
+            app.add_handler(CommandHandler(command, handler))
+            logger.info(f"Registered command handler: /{command}")
         app.add_handler(MessageHandler(DOCUMENT_FILTER, handle_document))
         app.add_handler(CallbackQueryHandler(button_callback))
 
