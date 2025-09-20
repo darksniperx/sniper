@@ -1634,7 +1634,7 @@ async def health(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "recent_logs": recent_logs,
         "timestamp": datetime.now().isoformat()
     })
-    except Exception as e:
+except Exception as e:
         logger.error(f"Error in health for user {user_id}: {str(e)}")
         await update.message.reply_text(f"❌ Error checking health: {str(e)}")
         save_log("errors", {"user_id": user_id, "error": f"Health check failed: {str(e)}"})
