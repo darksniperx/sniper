@@ -1860,7 +1860,7 @@ async def main():
             application.add_handler(CommandHandler("sharecommands", sharecommands))
             application.add_handler(MessageHandler(DOCUMENT_FILTER, handle_document))
             application.add_handler(CallbackQueryHandler(button_callback))
-            application.add_handler(error_handler)
+            application.add_error_handler(error_handler)  # Fixed: Use add_error_handler instead of add_handler
 
             # Broadcast online status
             await broadcast_online_status(application)
