@@ -18,10 +18,10 @@ import asyncio
 import io
 import json
 from typing import Dict, List, Any, Optional
-from bs4 import BeautifulSoup  # For HTML parsing
-import pdfplumber  # For PDF extraction
-import PyPDF2  # For PDF handling
-import zipfile  # For ZIP file creation
+from bs4 import BeautifulSoup
+import pdfplumber
+import PyPDF2
+import zipfile
 
 # Configure logging
 logging.basicConfig(
@@ -70,7 +70,7 @@ except ValueError as e:
 # Constants
 BASE_URL = "http://erp.imsec.ac.in/salary_slip/print_salary_slip/"
 
-# MongoDB Setup (unchanged)
+# MongoDB Setup
 class MongoDBManager:
     def __init__(self):
         self.client = None
@@ -118,7 +118,7 @@ class MongoDBManager:
 mongo_manager = MongoDBManager()
 df = pd.DataFrame()
 
-# Helper functions (unchanged, included for context)
+# Helper functions
 def get_db():
     mongo_manager.ensure_connection()
     return mongo_manager
@@ -404,21 +404,16 @@ def save_feedback_data(feedback_data):
         })
         raise
 
-# Updated fetch_salary_slip function
 def fetch_salary_slip(employee_id: str, month: Optional[str] = None, year: Optional[str] = None) -> Dict:
     try:
-        # Construct URL
         if month and year:
             url = f"{BASE_URL}{employee_id}/{month}/{year}"
         else:
             url = f"{BASE_URL}{employee_id}"
         
-        # Add headers if authentication is required (uncomment and configure as needed)
-        # headers = {"Authorization": "Bearer <token>", "Cookie": "<session_cookie>"}
-        response = requests.get(url, timeout=10) #, headers=headers)
+        response = requests.get(url, timeout=10)
         response.raise_for_status()
 
-        # Initialize default data
         salary_data = {
             "employee_id": employee_id,
             "name": "Unknown",
@@ -428,15 +423,13 @@ def fetch_salary_slip(employee_id: str, month: Optional[str] = None, year: Optio
             "allowances": "N/A",
             "deductions": "N/A",
             "net_salary": "N/A",
-            "pdf_data": None  # Store PDF bytes if available
+            "pdf_data": None
         }
 
-        # Check content type
         content_type = response.headers.get('content-type', '').lower()
         logger.info(f"Response content-type for employee {employee_id}: {content_type}")
 
         if 'application/pdf' in content_type and PDF_SUPPORT:
-            # Handle PDF response
             try:
                 pdf_buffer = io.BytesIO(response.content)
                 with pdfplumber.open(pdf_buffer) as pdf:
@@ -444,7 +437,6 @@ def fetch_salary_slip(employee_id: str, month: Optional[str] = None, year: Optio
                     for page in pdf.pages:
                         text += page.extract_text() or ""
                 
-                # Extract fields from PDF text (adjust based on actual PDF structure)
                 lines = text.split('\n')
                 for line in lines:
                     line = line.strip().lower()
@@ -459,17 +451,16 @@ def fetch_salary_slip(employee_id: str, month: Optional[str] = None, year: Optio
                     elif 'net salary' in line:
                         salary_data["net_salary"] = line.split(':', 1)[-1].strip() or "N/A"
                 
-                salary_data["pdf_data"] = response.content  # Store PDF bytes
+                salary_data["pdf_data"] = response.content
                 if salary_data["name"] == "Unknown":
                     logger.warning(f"Failed to extract name from PDF for employee {employee_id}. Raw text: {text[:500]}...")
                 logger.info(f"Fetched PDF salary slip for employee {employee_id}: {salary_data}")
                 return salary_data
             except Exception as e:
                 logger.error(f"Error parsing PDF for employee {employee_id}: {str(e)}")
-                salary_data["pdf_data"] = response.content  # Still return PDF even if parsing fails
+                salary_data["pdf_data"] = response.content
                 return salary_data
         elif 'application/json' in content_type:
-            # Handle JSON response
             try:
                 data = response.json()
                 salary_data.update({
@@ -487,11 +478,9 @@ def fetch_salary_slip(employee_id: str, month: Optional[str] = None, year: Optio
                 logger.error(f"Error parsing JSON for employee {employee_id}: {str(e)}")
                 return {"error": f"Failed to parse JSON response: {str(e)}"}
         else:
-            # Handle HTML response
             logger.info(f"Response is not PDF or JSON, attempting HTML parsing for employee {employee_id}")
             soup = BeautifulSoup(response.text, 'html.parser')
 
-            # Try multiple selectors for name
             name_selectors = [
                 ('div', {'class': 'employee-name'}),
                 ('span', {'class': 'name'}),
@@ -506,7 +495,6 @@ def fetch_salary_slip(employee_id: str, month: Optional[str] = None, year: Optio
                     salary_data["name"] = elem.text.strip().title()
                     break
 
-            # Try multiple selectors for other fields
             field_selectors = {
                 "basic_salary": [('div', {'class': 'basic-salary'}), ('td', {'class': 'basic-salary'})],
                 "allowances": [('div', {'class': 'allowances'}), ('td', {'class': 'allowances'})],
@@ -520,7 +508,6 @@ def fetch_salary_slip(employee_id: str, month: Optional[str] = None, year: Optio
                         salary_data[field] = elem.text.strip()
                         break
 
-            # Log raw HTML for debugging if name is still "Unknown"
             if salary_data["name"] == "Unknown":
                 logger.warning(f"Failed to extract name for employee {employee_id}. Raw HTML: {response.text[:500]}...")
 
@@ -530,7 +517,6 @@ def fetch_salary_slip(employee_id: str, month: Optional[str] = None, year: Optio
         logger.error(f"Error fetching salary slip for employee {employee_id}: {str(e)}")
         return {"error": f"Failed to fetch salary slip: {str(e)}"}
 
-# Updated downloadone function
 async def downloadone(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.message.from_user.id
     if await check_blocked(user_id, update, context):
@@ -569,14 +555,12 @@ async def downloadone(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text(f"❌ {salary_data['error']}")
             return
 
-        # Send JSON output
         json_text = json.dumps({k: v for k, v in salary_data.items() if k != "pdf_data"}, indent=2, default=str)
         await update.message.reply_text(
             f"✅ Salary slip for employee {employee_id}:\n```json\n{json_text}\n```",
             parse_mode="Markdown"
         )
 
-        # Send PDF if available
         if PDF_SUPPORT and salary_data.get("pdf_data"):
             pdf_buffer = io.BytesIO(salary_data["pdf_data"])
             await update.message.reply_document(
@@ -585,7 +569,6 @@ async def downloadone(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             pdf_buffer.close()
 
-        # Increment access count
         if user_id != ADMIN_ID:
             if not save_access_count(user_id, count + 1, total_limit):
                 await update.message.reply_text("❌ Error updating access count. Please try again.")
@@ -609,7 +592,6 @@ async def downloadone(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "timestamp": datetime.now().isoformat()
         })
 
-# Updated downloadall function
 async def downloadall(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.message.from_user.id
     if await check_blocked(user_id, update, context):
@@ -655,7 +637,6 @@ async def downloadall(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text(f"❌ No salary slips found for {month}/{year}.")
             return
 
-        # Send JSON file
         json_text = json.dumps(salary_slips, indent=2, default=str)
         json_buffer = io.StringIO(json_text)
         await update.message.reply_document(
@@ -664,7 +645,6 @@ async def downloadall(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         json_buffer.close()
 
-        # Send ZIP file if PDFs are available
         if PDF_SUPPORT and pdf_files:
             zip_buffer.seek(0)
             await update.message.reply_document(
@@ -692,7 +672,6 @@ async def downloadall(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "timestamp": datetime.now().isoformat()
         })
 
-# Unchanged functions (assumed from your provided code)
 async def check_blocked(user_id, update, context):
     blocked = load_blocked_users()
     if user_id in blocked:
@@ -740,8 +719,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "/email <query> - Search by email\n"
             "/phone <query> - Search by phone\n"
             "/downloadone <employee_id> - Get salary slip for an employee\n"
-            "/downloadall <month> <year> - Get salary slips for all employees\n"
-            "/profile - View usage stats\n"
             "/feedback <message> - Send feedback\n"
             "/help - Show commands"
         )
@@ -826,7 +803,6 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "/email <query> - Search by email\n"
             "/phone <query> - Search by phone\n"
             "/downloadone <employee_id> - Get salary slip for an employee\n"
-            "/downloadall <month> <year> - Get salary slips for all employees\n"
             "/feedback <message> - Send feedback\n"
             "/help - Show this message"
         )
@@ -1618,36 +1594,46 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 return
             try:
                 idx = int(data.split("_")[1])
+                results = context.user_data.get('search_results', [])
+                if idx < 0 or idx >= len(results):
+                    await query.message.reply_text("❌ Invalid selection index.")
+                    save_log("errors", {
+                        "user_id": user_id,
+                        "error": f"Invalid selection index in callback: {data}",
+                        "timestamp": datetime.now().isoformat()
+                    })
+                    return
+                record = results[idx]
+                query_text = context.user_data.get('search_query', '')
+                column = context.user_data.get('search_column', '')
+                json_output = format_student_record_json(record)
+                json_text = json.dumps(json_output, indent=2, default=str)
+                await query.message.reply_text(
+                    f"✅ Selected record for '{query_text}' in {column}:\n```json\n{json_text}\n```",
+                    parse_mode="Markdown"
+                )
+                if user_id != ADMIN_ID:
+                    if not save_access_count(user_id, count + 1, total_limit):
+                        await query.message.reply_text("❌ Error updating search count. Please try again.")
+                        return
+                    logger.info(f"Incremented search count for user {user_id} to {count + 1}/{total_limit} for selected result")
+                    student_name = record.get('Name', 'Unknown')
+                    await notify_admin(context, user_id, query.from_user.username, query_text, column, student_name)
+                save_log("searches", {
+                    "user_id": user_id,
+                    "query": query_text,
+                    "column": column,
+                    "student_name": record.get('Name', 'Unknown'),
+                    "result_count": 1,
+                    "timestamp": datetime.now().isoformat()
+                })
             except ValueError:
-                await query.edit_message_text("❌ Invalid selection index.")
+                await query.message.reply_text("❌ Invalid selection index.")
                 save_log("errors", {
                     "user_id": user_id,
                     "error": f"Invalid selection index in callback: {data}",
                     "timestamp": datetime.now().isoformat()
                 })
-                return
-            record = search_results[idx]
-            json_output = format_student_record_json(record)
-            json_text = json.dumps(json_output, indent=2, default=str)
-            await query.message.reply_text(
-                f"✅ Selected record for '{query_text}' in {column}:\n```json\n{json_text}\n```",
-                parse_mode="Markdown"
-            )
-            if user_id != ADMIN_ID:
-                if not save_access_count(user_id, count + 1, total_limit):
-                    await query.message.reply_text("❌ Error updating search count. Please try again.")
-                    return
-                logger.info(f"Incremented search count for user {user_id} to {count + 1}/{total_limit} for selected result")
-                student_name = record.get('Name', 'Unknown')
-                await notify_admin(context, user_id, query.from_user.username, query_text, column, student_name)
-            save_log("searches", {
-                "user_id": user_id,
-                "query": query_text,
-                "column": column,
-                "student_name": record.get('Name', 'Unknown'),
-                "result_count": 1,
-                "timestamp": datetime.now().isoformat()
-            })
         elif data.startswith("page_"):
             try:
                 page = int(data.split("_")[1])
@@ -1685,25 +1671,15 @@ async def health(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ Only admin can check health.")
         return
     try:
-        # Check MongoDB connection
         db = get_db()
         db.client.admin.command('ping')
         mongo_status = "✅ Connected"
-
-        # Check DataFrame
         df_status = f"✅ {len(df)} rows, columns: {list(df.columns) if not df.empty else 'None'}" if not df.empty else "⚠️ Empty"
-
-        # Check Excel files
         excel_files = get_excel_files()
         excel_status = f"✅ {len(excel_files)} files" if excel_files else "⚠️ No files"
-
-        # Check authorized users
         authorized = load_authorized_users()
         auth_status = f"✅ {len(authorized)} users" if authorized else "⚠️ No users"
-
-        # Check bot responsiveness
         bot_status = "✅ Online"
-
         health_text = (
             f"🩺 sniper's Bot Health Check:\n"
             f"📡 MongoDB: {mongo_status}\n"
@@ -1722,12 +1698,7 @@ async def health(update: Update, context: ContextTypes.DEFAULT_TYPE):
         })
 
 def format_student_record_json(record):
-    return {
-        "Name": record.get('Name', 'N/A'),
-        "Student Email": record.get('Student Email', 'N/A'),
-        "Student Mobile": record.get('Student Mobile', 'N/A'),
-        "Course": record.get('Course', 'N/A')
-    }
+    return {key: str(record.get(key, 'N/A')) for key in record.keys()}
 
 async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     logger.error(f"Update {update} caused error {context.error}")
@@ -1735,18 +1706,30 @@ async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "error": str(context.error),
         "timestamp": datetime.now().isoformat()
     })
-    if update and update.message:
-        user_id = update.message.from_user.id
-        await update.message.reply_text("❌ An error occurred. Please try again or contact @Darksniperrx.")
-        save_log("errors", {
-            "user_id": user_id,
-            "error": f"Error handler triggered: {str(context.error)}",
-            "timestamp": datetime.now().isoformat()
-        })
+    if update:
+        user_id = update.effective_user.id if update.effective_user else None
+        try:
+            if user_id:
+                await update.effective_message.reply_text(
+                    "❌ An unexpected error occurred. Please try again or contact @Darksniperrx."
+                )
+            save_log("errors", {
+                "user_id": user_id,
+                "error": f"Unhandled error: {str(context.error)}",
+                "timestamp": datetime.now().isoformat()
+            })
+        except Exception as e:
+            logger.error(f"Error in error_handler while notifying user {user_id}: {str(e)}")
+            save_log("errors", {
+                "user_id": user_id,
+                "error": f"Error handler failed to notify: {str(e)}",
+                "timestamp": datetime.now().isoformat()
+            })
 
 def main():
     try:
         app = ApplicationBuilder().token(BOT_TOKEN).build()
+
         app.add_handler(CommandHandler("start", start))
         app.add_handler(CommandHandler("help", help_command))
         app.add_handler(CommandHandler("name", search_name))
@@ -1772,19 +1755,24 @@ def main():
         app.add_handler(CallbackQueryHandler(callback_handler))
         app.add_error_handler(error_handler)
 
-        logger.info("Starting bot polling...")
+        logger.info("Starting bot...")
         app.run_polling(allowed_updates=Update.ALL_TYPES)
     except Exception as e:
-        logger.error(f"Failed to start bot: {str(e)}")
+        logger.error(f"Fatal error in main: {str(e)}")
         save_log("errors", {
-            "error": f"Bot startup failed: {str(e)}",
+            "error": f"Fatal error in main: {str(e)}",
             "timestamp": datetime.now().isoformat()
         })
+        raise
 
 if __name__ == "__main__":
     try:
         load_excel_on_startup()
         main()
     except Exception as e:
-        logger.error(f"Bot startup error: {str(e)}")
+        logger.error(f"Startup error: {str(e)}")
+        save_log("errors", {
+            "error": f"Startup error: {str(e)}",
+            "timestamp": datetime.now().isoformat()
+        })
         raise
