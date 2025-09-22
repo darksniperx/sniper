@@ -534,9 +534,9 @@ async def downloadone(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("🔒 You are not authorized. Use /start to request access.")
         return
 
-    if user_id != ADMIN_ID and count >= total_limit and user_id != ADMIN_ID:
+    if user_id != ADMIN_ID and count >= total_limit:
         await update.message.reply_text(
-            f"⚠️ Your access limit is reached. Contact @Darksniperrx for more access."
+            f"⚠️ Your access limit is reached. Current: count={count}, total_limit={total_limit}. Contact @Darksniperrx for more access."
         )
         logger.warning(f"Download blocked for user {user_id}: count={count}, total_limit={total_limit}")
         return
@@ -551,7 +551,9 @@ async def downloadone(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     try:
-        salary_data = fetch_salary_slip(employee_id)
+        # Call fetch_salary_slip and get both data and response headers
+        salary_data, response_headers = fetch_salary_slip_with_headers(employee_id)
+        
         if "error" in salary_data:
             await update.message.reply_text(f"❌ {salary_data['error']}")
             return
@@ -566,30 +568,68 @@ async def downloadone(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "allowances": salary_data.get("allowances", "N/A"),
             "deductions": salary_data.get("deductions", "N/A"),
             "net_salary": salary_data.get("net_salary", "N/A"),
-            "gross_salary": "N/A",  # Added field
-            "tax_deductions": "N/A",  # Added field
-            "bonus": "N/A",  # Added field
-            "leave_deductions": "N/A"  # Added field
+            "gross_salary": "N/A",
+            "tax_deductions": "N/A",
+            "bonus": "N/A",
+            "leave_deductions": "N/A",
+            "effective_work_days": "N/A",
+            "employee_number": "N/A",
+            "bank_name": "N/A",
+            "bank_account": "N/A",
+            "pan_number": "N/A",
+            "designation": "N/A",
+            "department": "N/A",
+            "location": "N/A"
         }
 
         # Attempt to extract additional fields from text if available
-        if 'application/pdf' in response.headers.get('content-type', '').lower() and PDF_SUPPORT and salary_data.get("pdf_data"):
+        if PDF_SUPPORT and salary_data.get("pdf_data"):
             pdf_buffer = io.BytesIO(salary_data["pdf_data"])
-            with pdfplumber.open(pdf_buffer) as pdf:
-                text = ""
-                for page in pdf.pages:
-                    text += page.extract_text() or ""
-                lines = text.split('\n')
-                for line in lines:
-                    line = line.strip().lower()
-                    if 'gross salary' in line:
-                        enhanced_salary_data["gross_salary"] = line.split(':', 1)[-1].strip() or "N/A"
-                    elif 'tax deductions' in line:
-                        enhanced_salary_data["tax_deductions"] = line.split(':', 1)[-1].strip() or "N/A"
-                    elif 'bonus' in line:
-                        enhanced_salary_data["bonus"] = line.split(':', 1)[-1].strip() or "N/A"
-                    elif 'leave deductions' in line:
-                        enhanced_salary_data["leave_deductions"] = line.split(':', 1)[-1].strip() or "N/A"
+            try:
+                with pdfplumber.open(pdf_buffer) as pdf:
+                    text = ""
+                    for page in pdf.pages:
+                        text += page.extract_text() or ""
+                    
+                    lines = text.split('\n')
+                    for line in lines:
+                        line = line.strip().lower()
+                        if 'name:' in line:
+                            enhanced_salary_data["name"] = line.split(':', 1)[-1].strip().title() or "Unknown"
+                        elif 'basic' in line and 'salary' in line:
+                            enhanced_salary_data["basic_salary"] = line.split(':', 1)[-1].strip() or "N/A"
+                        elif 'allowances' in line:
+                            enhanced_salary_data["allowances"] = line.split(':', 1)[-1].strip() or "N/A"
+                        elif 'deductions' in line:
+                            enhanced_salary_data["deductions"] = line.split(':', 1)[-1].strip() or "N/A"
+                        elif 'net salary' in line or 'net pay' in line:
+                            enhanced_salary_data["net_salary"] = line.split(':', 1)[-1].strip() or "N/A"
+                        elif 'gross' in line and 'salary' in line:
+                            enhanced_salary_data["gross_salary"] = line.split(':', 1)[-1].strip() or "N/A"
+                        elif 'tax' in line and 'deduction' in line:
+                            enhanced_salary_data["tax_deductions"] = line.split(':', 1)[-1].strip() or "N/A"
+                        elif 'bonus' in line:
+                            enhanced_salary_data["bonus"] = line.split(':', 1)[-1].strip() or "N/A"
+                        elif 'leave' in line and 'deduction' in line:
+                            enhanced_salary_data["leave_deductions"] = line.split(':', 1)[-1].strip() or "N/A"
+                        elif 'effective work days' in line:
+                            enhanced_salary_data["effective_work_days"] = line.split(':', 1)[-1].strip() or "N/A"
+                        elif 'employee no.' in line or 'employee number' in line:
+                            enhanced_salary_data["employee_number"] = line.split(':', 1)[-1].strip() or "N/A"
+                        elif 'bank name' in line:
+                            enhanced_salary_data["bank_name"] = line.split(':', 1)[-1].strip() or "N/A"
+                        elif 'bank account' in line:
+                            enhanced_salary_data["bank_account"] = line.split(':', 1)[-1].strip() or "N/A"
+                        elif 'pan no.' in line:
+                            enhanced_salary_data["pan_number"] = line.split(':', 1)[-1].strip() or "N/A"
+                        elif 'designation' in line:
+                            enhanced_salary_data["designation"] = line.split(':', 1)[-1].strip() or "N/A"
+                        elif 'department' in line:
+                            enhanced_salary_data["department"] = line.split(':', 1)[-1].strip() or "N/A"
+                        elif 'location' in line:
+                            enhanced_salary_data["location"] = line.split(':', 1)[-1].strip() or "N/A"
+            except Exception as e:
+                logger.error(f"Error parsing PDF for additional fields: {str(e)}")
 
         json_text = json.dumps(enhanced_salary_data, indent=2, default=str)
         await update.message.reply_text(
@@ -605,6 +645,7 @@ async def downloadone(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             pdf_buffer.close()
 
+        # No access count increment for admin
         if user_id != ADMIN_ID:
             if not save_access_count(user_id, count + 1, total_limit):
                 await update.message.reply_text("❌ Error updating access count. Please try again.")
@@ -627,6 +668,122 @@ async def downloadone(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "error": f"Downloadone failed: {str(e)}",
             "timestamp": datetime.now().isoformat()
         })
+
+def fetch_salary_slip_with_headers(employee_id: str, month: Optional[str] = None, year: Optional[str] = None) -> tuple:
+    """
+    Modified fetch_salary_slip function that returns both data and response headers
+    """
+    try:
+        if month and year:
+            url = f"{BASE_URL}{employee_id}/{month}/{year}"
+        else:
+            url = f"{BASE_URL}{employee_id}"
+        
+        response = requests.get(url, timeout=10)
+        response.raise_for_status()
+
+        salary_data = {
+            "employee_id": employee_id,
+            "name": "Unknown",
+            "month": month or "N/A",
+            "year": year or "N/A",
+            "basic_salary": "N/A",
+            "allowances": "N/A",
+            "deductions": "N/A",
+            "net_salary": "N/A",
+            "pdf_data": None
+        }
+
+        content_type = response.headers.get('content-type', '').lower()
+        logger.info(f"Response content-type for employee {employee_id}: {content_type}")
+
+        if 'application/pdf' in content_type and PDF_SUPPORT:
+            try:
+                pdf_buffer = io.BytesIO(response.content)
+                with pdfplumber.open(pdf_buffer) as pdf:
+                    text = ""
+                    for page in pdf.pages:
+                        text += page.extract_text() or ""
+                
+                lines = text.split('\n')
+                for line in lines:
+                    line = line.strip().lower()
+                    if 'name' in line:
+                        salary_data["name"] = line.split(':', 1)[-1].strip().title() or "Unknown"
+                    elif 'basic salary' in line:
+                        salary_data["basic_salary"] = line.split(':', 1)[-1].strip() or "N/A"
+                    elif 'allowances' in line:
+                        salary_data["allowances"] = line.split(':', 1)[-1].strip() or "N/A"
+                    elif 'deductions' in line:
+                        salary_data["deductions"] = line.split(':', 1)[-1].strip() or "N/A"
+                    elif 'net salary' in line:
+                        salary_data["net_salary"] = line.split(':', 1)[-1].strip() or "N/A"
+                
+                salary_data["pdf_data"] = response.content
+                if salary_data["name"] == "Unknown":
+                    logger.warning(f"Failed to extract name from PDF for employee {employee_id}. Raw text: {text[:500]}...")
+                logger.info(f"Fetched PDF salary slip for employee {employee_id}: {salary_data}")
+                return salary_data, response.headers
+            except Exception as e:
+                logger.error(f"Error parsing PDF for employee {employee_id}: {str(e)}")
+                salary_data["pdf_data"] = response.content
+                return salary_data, response.headers
+        elif 'application/json' in content_type:
+            try:
+                data = response.json()
+                salary_data.update({
+                    "name": data.get("name", "Unknown"),
+                    "month": month or data.get("month", "N/A"),
+                    "year": year or data.get("year", "N/A"),
+                    "basic_salary": data.get("basic_salary", "N/A"),
+                    "allowances": data.get("allowances", "N/A"),
+                    "deductions": data.get("deductions", "N/A"),
+                    "net_salary": data.get("net_salary", "N/A")
+                })
+                logger.info(f"Fetched JSON salary slip for employee {employee_id}: {salary_data}")
+                return salary_data, response.headers
+            except ValueError as e:
+                logger.error(f"Error parsing JSON for employee {employee_id}: {str(e)}")
+                return {"error": f"Failed to parse JSON response: {str(e)}"}, response.headers
+        else:
+            logger.info(f"Response is not PDF or JSON, attempting HTML parsing for employee {employee_id}")
+            soup = BeautifulSoup(response.text, 'html.parser')
+
+            name_selectors = [
+                ('div', {'class': 'employee-name'}),
+                ('span', {'class': 'name'}),
+                ('h1', {}),
+                ('td', {'class': 'name'}),
+                ('p', {'class': 'employee-name'}),
+                ('span', {'id': 'emp_name'})
+            ]
+            for tag, attrs in name_selectors:
+                elem = soup.find(tag, attrs)
+                if elem and elem.text.strip():
+                    salary_data["name"] = elem.text.strip().title()
+                    break
+
+            field_selectors = {
+                "basic_salary": [('div', {'class': 'basic-salary'}), ('td', {'class': 'basic-salary'})],
+                "allowances": [('div', {'class': 'allowances'}), ('td', {'class': 'allowances'})],
+                "deductions": [('div', {'class': 'deductions'}), ('td', {'class': 'deductions'})],
+                "net_salary": [('div', {'class': 'net-salary'}), ('td', {'class': 'net-salary'})]
+            }
+            for field, selectors in field_selectors.items():
+                for tag, attrs in selectors:
+                    elem = soup.find(tag, attrs)
+                    if elem and elem.text.strip():
+                        salary_data[field] = elem.text.strip()
+                        break
+
+            if salary_data["name"] == "Unknown":
+                logger.warning(f"Failed to extract name for employee {employee_id}. Raw HTML: {response.text[:500]}...")
+
+            logger.info(f"Fetched HTML salary slip for employee {employee_id}: {salary_data}")
+            return salary_data, response.headers
+    except requests.RequestException as e:
+        logger.error(f"Error fetching salary slip for employee {employee_id}: {str(e)}")
+        return {"error": f"Failed to fetch salary slip: {str(e)}"}, {}
 
 async def downloadall(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.message.from_user.id
@@ -1845,3 +2002,4 @@ if __name__ == "__main__":
             "timestamp": datetime.now().isoformat()
         })
         raise
+        
