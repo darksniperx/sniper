@@ -1,6 +1,5 @@
 import os
 import requests
-import pdfplumber
 import pandas as pd
 from datetime import datetime
 import telegram
@@ -16,7 +15,17 @@ import importlib.metadata
 import time
 import logging
 import asyncio
+import io
 from typing import Dict, List, Any, Optional
+
+# Optional PDF support
+try:
+    import pdfplumber
+    PDF_SUPPORT = True
+    logger.info("PDF support enabled with pdfplumber")
+except ImportError:
+    PDF_SUPPORT = False
+    logger.warning("pdfplumber not installed - PDF download features disabled")
 
 # Configure logging
 logging.basicConfig(
@@ -28,11 +37,14 @@ logger = logging.getLogger(__name__)
 # Check python-telegram-bot version
 try:
     telegram_version = importlib.metadata.version("python-telegram-bot")
-    logger.info(f"Using python-telegram-bot version: {telegram_version}")
+    if not telegram_version.startswith('22.'):
+        logger.warning(f"Using python-telegram-bot version: {telegram_version} (recommended: 22.x)")
+    else:
+        logger.info(f"Using python-telegram-bot version: {telegram_version}")
     DOCUMENT_FILTER = filters.Document.ALL
 except Exception as e:
     logger.error(f"Error: python-telegram-bot not installed correctly: {e}")
-    raise ImportError("Please install python-telegram-bot==22.3")
+    raise ImportError("Please install python-telegram-bot>=22.0")
 
 # CONFIG - Validate environment variables
 def get_env_var(name: str, default: Optional[str] = None) -> str:
@@ -53,7 +65,7 @@ except ValueError as e:
     logger.error(f"Configuration error: {e}")
     raise
 
-# New constants for PDF downloading
+# Constants for PDF downloading
 BASE_URL = "http://erp.imsec.ac.in/salary_slip/print_salary_slip/"
 SAVE_DIR = "salary_slips"
 os.makedirs(SAVE_DIR, exist_ok=True)
@@ -177,6 +189,9 @@ def format_student_record(record):
 # Helper to extract name from PDF
 def extract_name_from_pdf(file_path):
     """Extract sender's name from the PDF using pdfplumber."""
+    if not PDF_SUPPORT:
+        logger.warning("Cannot extract name - pdfplumber not installed")
+        return None
     try:
         with pdfplumber.open(file_path) as pdf:
             first_page = pdf.pages[0]
@@ -185,12 +200,16 @@ def extract_name_from_pdf(file_path):
                 if "Name:" in line:
                     return line.split("Name:")[1].strip()
             return None
-    except:
+    except Exception as e:
+        logger.error(f"Error extracting name from PDF: {str(e)}")
         return None
 
 # Helper to download PDF
 def download_pdf(emp_id):
     """Download PDF for an employee ID and save it locally."""
+    if not PDF_SUPPORT:
+        logger.error("PDF support not available - install pdfplumber")
+        return None
     url = f"{BASE_URL}{emp_id}"
     headers = {"User-Agent": "Mozilla/5.0"}
     try:
@@ -217,7 +236,7 @@ def download_pdf(emp_id):
         logger.error(f"Error downloading PDF for emp_id {emp_id}: {str(e)}")
         return None
 
-# Helper to send admin notification
+# Helper to send admin notification for searches
 async def notify_admin(context, user_id, username, query, column, student_name):
     message = (
         f"📢 New Search by User:\n"
@@ -242,7 +261,7 @@ async def notify_admin(context, user_id, username, query, column, student_name):
                 })
             await asyncio.sleep(1)
 
-# New helper for PDF download notifications (no MongoDB logging)
+# Helper for PDF download notifications (no MongoDB logging)
 async def notify_admin_pdf(context: ContextTypes.DEFAULT_TYPE, user_id: int, username: str, action: str):
     """Notify admin of PDF download actions via Telegram without logging to MongoDB."""
     message = (
@@ -286,19 +305,23 @@ def load_all_excels():
             else:
                 logger.warning(f"No data found for {filename} in GridFS")
         except Exception as e:
-            logger.error(f"Error loading excel {filename}: {str(e)}")
+            logger.error(f"Error loading excel {filename}: {e}")
     
     if dfs:
-        combined_df = pd.concat(dfs, ignore_index=True)
-        logger.info(f"Combined DataFrame with {len(combined_df)} rows and columns: {list(combined_df.columns)}")
-        for col in combined_df.select_dtypes(include=['object']).columns:
-            combined_df[col] = combined_df[col].str.lower()
-        initial_rows = len(combined_df)
-        combined_df = combined_df.drop_duplicates()
-        final_rows = len(combined_df)
-        duplicates_removed = initial_rows - final_rows
-        logger.info(f"Deduplication: Removed {duplicates_removed} duplicate rows. Final DataFrame has {final_rows} rows.")
-        return combined_df
+        try:
+            combined_df = pd.concat(dfs, ignore_index=True)
+            logger.info(f"Combined DataFrame with {len(combined_df)} rows and columns: {list(combined_df.columns)}")
+            for col in combined_df.select_dtypes(include=['object']).columns:
+                combined_df[col] = combined_df[col].str.lower()
+            initial_rows = len(combined_df)
+            combined_df = combined_df.drop_duplicates()
+            final_rows = len(combined_df)
+            duplicates_removed = initial_rows - final_rows
+            logger.info(f"Deduplication: Removed {duplicates_removed} duplicate rows. Final DataFrame has {final_rows} rows.")
+            return combined_df
+        except Exception as e:
+            logger.error(f"Error combining DataFrames: {str(e)}")
+            return pd.DataFrame()
     logger.warning("No data loaded into DataFrame")
     return pd.DataFrame()
 
@@ -315,15 +338,24 @@ def save_excel_to_gridfs(file_data, filename):
 
 def get_excel_files():
     db = get_db()
-    files = [f.filename for f in db.fs.find()]
-    logger.info(f"Found {len(files)} Excel files in GridFS: {files}")
-    return files
+    try:
+        files = [f.filename for f in db.fs.find()]
+        logger.info(f"Found {len(files)} Excel files in GridFS: {files}")
+        return files
+    except Exception as e:
+        logger.error(f"Error fetching Excel files: {str(e)}")
+        return []
 
 def load_excel_on_startup():
     global df
-    df = load_all_excels()
-    logger.info(f"DataFrame on startup: {len(df)} rows, columns: {list(df.columns) if not df.empty else 'None'}")
-    return df
+    try:
+        df = load_all_excels()
+        logger.info(f"DataFrame on startup: {len(df)} rows, columns: {list(df.columns) if not df.empty else 'None'}")
+        return df
+    except Exception as e:
+        logger.error(f"Failed to load Excel data on startup: {str(e)}", exc_info=True)
+        df = pd.DataFrame()
+        return df
 
 def load_authorized_users():
     db = get_db()
@@ -1638,7 +1670,13 @@ async def health_check(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 def main():
     global df
-    df = load_excel_on_startup()
+    try:
+        df = load_excel_on_startup()
+        logger.info(f"Startup successful: DataFrame loaded with {len(df)} rows")
+    except Exception as e:
+        logger.error(f"Startup failed during DataFrame loading: {str(e)}", exc_info=True)
+        df = pd.DataFrame()
+        logger.warning("Using empty DataFrame - Excel loading failed")
     
     app = ApplicationBuilder().token(BOT_TOKEN).build()
 
@@ -1669,12 +1707,21 @@ def main():
 
     logger.info("🤖 sniper's Bot running...")
     
-    if USE_WEBHOOK:
-        app.run_webhook(
-            listen="0.0.0.0",
-            port=PORT,
-            url_path=BOT_TOKEN,
-            webhook_url=f"{WEBHOOK_URL}/{BOT_TOKEN}"
-        )
-    else:
-        app.run_polling()
+    try:
+        if USE_WEBHOOK:
+            if not WEBHOOK_URL or not WEBHOOK_URL.startswith('https://'):
+                logger.error("Invalid WEBHOOK_URL: Must be HTTPS for webhook mode")
+                raise ValueError("WEBHOOK_URL must be a valid HTTPS URL")
+            logger.info(f"Starting webhook mode on {WEBHOOK_URL}")
+            app.run_webhook(
+                listen="0.0.0.0",
+                port=PORT,
+                url_path=BOT_TOKEN,
+                webhook_url=f"{WEBHOOK_URL}/{BOT_TOKEN}"
+            )
+        else:
+            logger.info("Starting polling mode")
+            app.run_polling()
+    except Exception as e:
+        logger.error(f"Bot runtime failed: {str(e)}", exc_info=True)
+        raise
