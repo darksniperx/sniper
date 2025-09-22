@@ -1179,12 +1179,16 @@ async def perform_search(update: Update, context: ContextTypes.DEFAULT_TYPE, col
                 lines = json_text.split("\n")[1:-1]  # Skip opening and closing braces
                 for line in lines:
                     if len(current_part) + len(line) + 100 > max_message_length:
-                        parts.append(f"✅ Found 1 match for '{query}' in {column} (Part {len(parts) + 1}):\n```json\n{current_part.rstrip(',\n')}\n}}```")
+                        # Remove trailing comma and newline before closing JSON
+                        cleaned_part = current_part.rstrip().rstrip(',')
+                        parts.append(f"✅ Found 1 match for '{query}' in {column} (Part {len(parts) + 1}):\n```json\n{cleaned_part}\n}}```")
                         current_part = "{\n" + line + "\n"
                     else:
                         current_part += line + "\n"
                 if current_part.strip() != "{":
-                    parts.append(f"✅ Found 1 match for '{query}' in {column} (Part {len(parts) + 1}):\n```json\n{current_part.rstrip(',\n')}\n}}```")
+                    # Remove trailing comma and newline for the last part
+                    cleaned_part = current_part.rstrip().rstrip(',')
+                    parts.append(f"✅ Found 1 match for '{query}' in {column} (Part {len(parts) + 1}):\n```json\n{cleaned_part}\n}}```")
                 
                 for part in parts:
                     await update.message.reply_text(part, parse_mode="Markdown")
