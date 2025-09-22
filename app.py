@@ -136,7 +136,11 @@ def load_all_excels():
                 file_stream = io.BytesIO(file_data.read())
                 excel_dfs = pd.read_excel(file_stream, sheet_name=None, engine='openpyxl')
                 for sheet_name, sheet_df in excel_dfs.items():
-                    if not sheet_df.empty:
+                    if sheet_df is not None and not sheet_df.empty:
+                        # Map 'Student Name' to 'Name' if present
+                        if 'Student Name' in sheet_df.columns:
+                            sheet_df['Name'] = sheet_df['Student Name']
+                            logger.info(f"Mapped 'Student Name' to 'Name' in {filename}, sheet {sheet_name}")
                         required_columns = {'Name', 'Student Email', 'Student Mobile', 'Course'}
                         missing = required_columns - set(sheet_df.columns)
                         if missing:
@@ -146,12 +150,12 @@ def load_all_excels():
                         logger.info(f"Loaded sheet '{sheet_name}' from {filename} with {len(sheet_df)} rows, columns: {list(sheet_df.columns)}")
                         dfs.append(sheet_df)
                     else:
-                        logger.warning(f"Sheet '{sheet_name}' in {filename} is empty, skipping")
+                        logger.warning(f"Sheet '{sheet_name}' in {filename} is empty or None, skipping")
             else:
                 logger.error(f"No data found for {filename} in GridFS despite being listed")
         except Exception as e:
             logger.error(f"Error loading excel {filename}: {str(e)}", exc_info=True)
-            continue  # Skip this file and proceed with others
+            continue
     
     if not dfs:
         logger.warning("No valid data frames loaded from any Excel files")
@@ -163,10 +167,12 @@ def load_all_excels():
         for col in combined_df.select_dtypes(include=['object']).columns:
             combined_df[col] = combined_df[col].str.lower().fillna("n/a")
         initial_rows = len(combined_df)
-        combined_df = combined_df.drop_duplicates(subset=['Name', 'Student Email', 'Student Mobile', 'Course'])
+        # Temporarily disable deduplication to test
+        # combined_df = combined_df.drop_duplicates(subset=['Name', 'Student Email', 'Student Mobile', 'Course'])
         final_rows = len(combined_df)
-        duplicates_removed = initial_rows - final_rows
-        logger.info(f"Deduplication: Removed {duplicates_removed} duplicate rows. Final DataFrame has {final_rows} rows.")
+        # duplicates_removed = initial_rows - final_rows
+        # logger.info(f"Deduplication: Removed {duplicates_removed} duplicate rows. Final DataFrame has {final_rows} rows.")
+        logger.info(f"Final DataFrame (without deduplication): {final_rows} rows")
         return combined_df
     except Exception as e:
         logger.error(f"Error combining DataFrames: {str(e)}", exc_info=True)
@@ -1266,6 +1272,10 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
             try:
                 csv_df = pd.read_csv(file_stream)
                 logger.info(f"Read CSV file {file_name} with {len(csv_df)} rows, columns: {list(csv_df.columns)}")
+                # Map 'Student Name' to 'Name' if present
+                if 'Student Name' in csv_df.columns:
+                    csv_df['Name'] = csv_df['Student Name']
+                    logger.info(f"Mapped 'Student Name' to 'Name' in {file_name}")
             except Exception as e:
                 error_msg = f"❌ Error reading CSV file: {str(e)}"
                 logger.error(error_msg)
@@ -1302,6 +1312,9 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
             columns_found = set()
             row_counts = []
             for sheet_name, sheet_df in excel_dfs.items():
+                if 'Student Name' in sheet_df.columns:
+                    sheet_df['Name'] = sheet_df['Student Name']
+                    logger.info(f"Mapped 'Student Name' to 'Name' in {file_name}, sheet {sheet_name}")
                 columns_found.update(sheet_df.columns)
                 row_counts.append(len(sheet_df))
                 logger.info(f"Sheet '{sheet_name}' in {file_name} has {len(sheet_df)} rows, columns: {list(sheet_df.columns)}")
@@ -1346,7 +1359,7 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "error": f"File upload failed: {str(e)}",
             "timestamp": datetime.now().isoformat()
         })
-        
+
 async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.message.from_user.id
     if await check_blocked(user_id, update, context):
