@@ -1925,15 +1925,13 @@ async def health(update: Update, context: ContextTypes.DEFAULT_TYPE):
 def format_student_record_json(record):
     filtered_record = {}
     for key, value in record.items():
-        # Skip if value is empty, "nan", or None; use "N/A" for missing data
+        # Skip if value is None, "nan", empty string, or whitespace
         if pd.notnull(value) and str(value).strip() and str(value).lower() != "nan":
-            # Convert numeric values to clean strings (remove .0 for integers)
+            # Convert all values to string, clean integers (remove .0)
             if isinstance(value, float) and value.is_integer():
                 filtered_record[key] = str(int(value))
             else:
-                filtered_record[key] = str(value)
-        else:
-            filtered_record[key] = "N/A"
+                filtered_record[key] = str(value).strip()
     return filtered_record
 
 async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
