@@ -1265,10 +1265,16 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             columns_found = set(csv_df.columns)
             required_columns = {'Name', 'Student Email', 'Student Mobile', 'Course'}
-            if not required_columns.issubset(columns_found):
-                missing = required_columns - columns_found
-                await update.message.reply_text(f"❌ File missing required columns: {', '.join(missing)}")
-                return
+            missing = required_columns - columns_found
+            if missing:
+                logger.warning(f"File {file_name} missing columns: {', '.join(missing)}. Proceeding with available data.")
+                await update.message.reply_text(f"⚠️ File {file_name} missing columns: {', '.join(missing)}. Proceeding with available data.")
+                # Optionally fill missing columns with default values
+                for col in required_columns:
+                    if col not in csv_df.columns:
+                        csv_df[col] = "N/A"
+            else:
+                await update.message.reply_text(f"✅ All required columns found in {file_name}.")
 
             xlsx_stream = io.BytesIO()
             csv_df.to_excel(xlsx_stream, index=False, engine='openpyxl')
@@ -1287,10 +1293,18 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 logger.info(f"Sheet '{sheet_name}' in {file_name} has {len(sheet_df)} rows, columns: {list(sheet_df.columns)}")
             
             required_columns = {'Name', 'Student Email', 'Student Mobile', 'Course'}
-            if not required_columns.issubset(columns_found):
-                missing = required_columns - columns_found
-                await update.message.reply_text(f"❌ Excel file missing required columns: {', '.join(missing)}")
-                return
+            missing = required_columns - columns_found
+            if missing:
+                logger.warning(f"Excel file {file_name} missing columns: {', '.join(missing)}. Proceeding with available data.")
+                await update.message.reply_text(f"⚠️ Excel file {file_name} missing columns: {', '.join(missing)}. Proceeding with available data.")
+                # Optionally fill missing columns in all sheets
+                for sheet_name, sheet_df in excel_dfs.items():
+                    for col in required_columns:
+                        if col not in sheet_df.columns:
+                            sheet_df[col] = "N/A"
+                    excel_dfs[sheet_name] = sheet_df
+            else:
+                await update.message.reply_text(f"✅ All required columns found in {file_name}.")
 
             save_excel_to_gridfs(file_stream, file_name)
             await update.message.reply_text(f"✅ Excel file {file_name} uploaded.")
@@ -1307,40 +1321,6 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "error": f"File upload failed: {str(e)}",
             "timestamp": datetime.now().isoformat()
         })
-
-async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.message.from_user.id
-    if await check_blocked(user_id, update, context):
-        return
-    if user_id != ADMIN_ID:
-        await update.message.reply_text("❌ Only admin can broadcast.")
-        return
-
-    if not context.args:
-        await update.message.reply_text("Usage: /broadcast <message>")
-        return
-
-    msg = " ".join(context.args)
-    authorized = load_authorized_users()
-    total_sent = 0
-
-    for uid in authorized:
-        for attempt in range(3):
-            try:
-                await context.bot.send_message(chat_id=uid, text=f"📢 Broadcast from sniper:\n\n{msg}")
-                total_sent += 1
-                break
-            except telegram.error.BadRequest as e:
-                logger.error(f"Broadcast error to {uid}, attempt {attempt + 1}: {e}")
-                if attempt == 2:
-                    save_log("errors", {
-                        "user_id": uid,
-                        "error": f"Broadcast failed after 3 attempts: {str(e)}",
-                        "timestamp": datetime.now().isoformat()
-                    })
-                await asyncio.sleep(1)
-
-    await update.message.reply_text(f"Broadcast sent to {total_sent} users.")
 
 async def addaccess(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.message.from_user.id
@@ -1725,7 +1705,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             logger.info(f"Checking limit for user {user_id} on selection: count={count}, total_limit={total_limit}")
             if user_id != ADMIN_ID and count >= total_limit:
                 await query.message.reply_text(
-                    f"⚠️ Your search limit is reached. Current: count={count}, total_limit={total_limit}. Contact @Darksniperrx for more searches."
+                    f"⚠️ Your search limit is reached. Contact @Darksniperrx for more searches."
                 )
                 logger.warning(f"Selection blocked for user {user_id}: count={count}, total_limit={total_limit}")
                 return
