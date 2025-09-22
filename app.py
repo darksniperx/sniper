@@ -141,12 +141,12 @@ def load_all_excels():
                         if 'Student Name' in sheet_df.columns:
                             sheet_df['Name'] = sheet_df['Student Name']
                             logger.info(f"Mapped 'Student Name' to 'Name' in {filename}, sheet {sheet_name}")
+                        # Ensure required columns exist
                         required_columns = {'Name', 'Student Email', 'Student Mobile', 'Course'}
-                        missing = required_columns - set(sheet_df.columns)
-                        if missing:
-                            logger.warning(f"Sheet '{sheet_name}' in {filename} missing columns: {', '.join(missing)}. Adding 'N/A'.")
-                            for col in missing:
-                                sheet_df[col] = "N/A"
+                        for col in required_columns:
+                            if col not in sheet_df.columns:
+                                sheet_df[col] = "N/A"  # Add missing required columns with "N/A"
+                                logger.warning(f"Added missing column '{col}' in {filename}, sheet {sheet_name}")
                         logger.info(f"Loaded sheet '{sheet_name}' from {filename} with {len(sheet_df)} rows, columns: {list(sheet_df.columns)}")
                         dfs.append(sheet_df)
                     else:
@@ -164,15 +164,24 @@ def load_all_excels():
     try:
         combined_df = pd.concat(dfs, ignore_index=True)
         logger.info(f"Initial combined DataFrame: {len(combined_df)} rows, columns: {list(combined_df.columns)}")
+        # Trim whitespace and convert to lowercase for object columns
         for col in combined_df.select_dtypes(include=['object']).columns:
-            combined_df[col] = combined_df[col].str.lower().fillna("n/a")
-        initial_rows = len(combined_df)
-        # Temporarily disable deduplication to test
-        # combined_df = combined_df.drop_duplicates(subset=['Name', 'Student Email', 'Student Mobile', 'Course'])
-        final_rows = len(combined_df)
-        # duplicates_removed = initial_rows - final_rows
-        # logger.info(f"Deduplication: Removed {duplicates_removed} duplicate rows. Final DataFrame has {final_rows} rows.")
-        logger.info(f"Final DataFrame (without deduplication): {final_rows} rows")
+            combined_df[col] = combined_df[col].str.strip().str.lower()
+        # Apply .fillna("n/a") only to required columns
+        required_columns = {'Name', 'Student Email', 'Student Mobile', 'Course'}
+        for col in required_columns:
+            if col in combined_df.columns:
+                combined_df[col] = combined_df[col].fillna("n/a")
+            else:
+                combined_df[col] = "n/a"
+        # Log sample data for debugging
+        if not combined_df.empty:
+            logger.info(f"Sample data (first 5 rows):\n{combined_df.head().to_dict(orient='records')}")
+            # Check for Kanika specifically
+            kanika_data = combined_df[combined_df['Name'].str.contains('kanika', case=False, na=False)]
+            if not kanika_data.empty:
+                logger.info(f"Found Kanika data:\n{kanika_data.to_dict(orient='records')}")
+        logger.info(f"Final DataFrame: {len(combined_df)} rows, columns: {list(combined_df.columns)}")
         return combined_df
     except Exception as e:
         logger.error(f"Error combining DataFrames: {str(e)}", exc_info=True)
@@ -1276,6 +1285,12 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 if 'Student Name' in csv_df.columns:
                     csv_df['Name'] = csv_df['Student Name']
                     logger.info(f"Mapped 'Student Name' to 'Name' in {file_name}")
+                # Ensure required columns
+                required_columns = {'Name', 'Student Email', 'Student Mobile', 'Course'}
+                for col in required_columns:
+                    if col not in csv_df.columns:
+                        csv_df[col] = "N/A"
+                        logger.warning(f"Added missing column '{col}' in {file_name}")
             except Exception as e:
                 error_msg = f"❌ Error reading CSV file: {str(e)}"
                 logger.error(error_msg)
@@ -1286,18 +1301,6 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     "timestamp": datetime.now().isoformat()
                 })
                 return
-
-            columns_found = set(csv_df.columns)
-            required_columns = {'Name', 'Student Email', 'Student Mobile', 'Course'}
-            missing = required_columns - columns_found
-            if missing:
-                logger.warning(f"File {file_name} missing columns: {', '.join(missing)}. Adding defaults.")
-                await update.message.reply_text(f"⚠️ File {file_name} missing columns: {', '.join(missing)}. Adding 'N/A' for missing columns.")
-                for col in required_columns:
-                    if col not in csv_df.columns:
-                        csv_df[col] = "N/A"
-            else:
-                await update.message.reply_text(f"✅ All required columns found in {file_name}.")
 
             xlsx_stream = io.BytesIO()
             csv_df.to_excel(xlsx_stream, index=False, engine='openpyxl')
@@ -1315,22 +1318,16 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 if 'Student Name' in sheet_df.columns:
                     sheet_df['Name'] = sheet_df['Student Name']
                     logger.info(f"Mapped 'Student Name' to 'Name' in {file_name}, sheet {sheet_name}")
+                # Ensure required columns
+                required_columns = {'Name', 'Student Email', 'Student Mobile', 'Course'}
+                for col in required_columns:
+                    if col not in sheet_df.columns:
+                        sheet_df[col] = "N/A"
+                        logger.warning(f"Added missing column '{col}' in {file_name}, sheet {sheet_name}")
                 columns_found.update(sheet_df.columns)
                 row_counts.append(len(sheet_df))
                 logger.info(f"Sheet '{sheet_name}' in {file_name} has {len(sheet_df)} rows, columns: {list(sheet_df.columns)}")
-
-            required_columns = {'Name', 'Student Email', 'Student Mobile', 'Course'}
-            missing = required_columns - columns_found
-            if missing:
-                logger.warning(f"Excel file {file_name} missing columns: {', '.join(missing)}. Adding defaults.")
-                await update.message.reply_text(f"⚠️ Excel file {file_name} missing columns: {', '.join(missing)}. Adding 'N/A' for missing columns.")
-                for sheet_name, sheet_df in excel_dfs.items():
-                    for col in required_columns:
-                        if col not in sheet_df.columns:
-                            sheet_df[col] = "N/A"
-                    excel_dfs[sheet_name] = sheet_df
-            else:
-                await update.message.reply_text(f"✅ All required columns found in {file_name}.")
+                excel_dfs[sheet_name] = sheet_df
 
             output_stream = io.BytesIO()
             with pd.ExcelWriter(output_stream, engine='openpyxl') as writer:
@@ -1339,7 +1336,7 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
             output_stream.seek(0)
             save_excel_to_gridfs(output_stream.getvalue(), file_name)
             logger.info(f"Successfully saved {file_name} to GridFS")
-            await update.message.reply_text(f"✅ Excel file {file_name} uploaded with updated columns.")
+            await update.message.reply_text(f"✅ Excel file {file_name} uploaded with {sum(row_counts)} rows across {len(excel_dfs)} sheets.")
 
         global df
         logger.info("Reloading DataFrame after file upload...")
