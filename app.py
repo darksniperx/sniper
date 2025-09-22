@@ -1,4 +1,5 @@
 import os
+import requests
 import pandas as pd
 from datetime import datetime
 import telegram
@@ -17,6 +18,7 @@ import asyncio
 import io
 import json
 from typing import Dict, List, Any, Optional
+from bs4 import BeautifulSoup  # Added for HTML parsing
 
 # Configure logging at the very top
 logging.basicConfig(
@@ -52,6 +54,9 @@ try:
 except ValueError as e:
     logger.error(f"Configuration error: {e}")
     raise
+
+# Constants for salary slip fetching
+BASE_URL = "http://erp.imsec.ac.in/salary_slip/print_salary_slip/"
 
 # MongoDB Setup
 class MongoDBManager:
@@ -103,6 +108,60 @@ mongo_manager = MongoDBManager()
 
 # GLOBAL DATA
 df = pd.DataFrame()
+
+# Helper function to fetch and parse salary slip data
+def fetch_salary_slip(employee_id: str, month: Optional[str] = None, year: Optional[str] = None) -> Dict:
+    try:
+        # Construct URL based on whether month/year are provided
+        if month and year:
+            url = f"{BASE_URL}{employee_id}/{month}/{year}"
+        else:
+            url = f"{BASE_URL}{employee_id}"
+        
+        response = requests.get(url, timeout=10)
+        response.raise_for_status()
+
+        # Assume HTML response; parse with BeautifulSoup
+        soup = BeautifulSoup(response.text, 'html.parser')
+        
+        # Example parsing (adjust based on actual HTML structure)
+        salary_data = {
+            "employee_id": employee_id,
+            "name": "Unknown",
+            "month": month or "N/A",
+            "year": year or "N/A",
+            "basic_salary": "N/A",
+            "allowances": "N/A",
+            "deductions": "N/A",
+            "net_salary": "N/A"
+        }
+
+        # Example: Extract data from HTML (modify based on actual HTML tags)
+        name_elem = soup.find('div', class_='employee-name') or soup.find('span', class_='name')
+        if name_elem:
+            salary_data["name"] = name_elem.text.strip()
+
+        basic_salary_elem = soup.find('div', class_='basic-salary')
+        if basic_salary_elem:
+            salary_data["basic_salary"] = basic_salary_elem.text.strip()
+
+        allowances_elem = soup.find('div', class_='allowances')
+        if allowances_elem:
+            salary_data["allowances"] = allowances_elem.text.strip()
+
+        deductions_elem = soup.find('div', class_='deductions')
+        if deductions_elem:
+            salary_data["deductions"] = deductions_elem.text.strip()
+
+        net_salary_elem = soup.find('div', class_='net-salary')
+        if net_salary_elem:
+            salary_data["net_salary"] = net_salary_elem.text.strip()
+
+        logger.info(f"Fetched salary slip for employee {employee_id}: {salary_data}")
+        return salary_data
+    except requests.RequestException as e:
+        logger.error(f"Error fetching salary slip for employee {employee_id}: {str(e)}")
+        return {"error": f"Failed to fetch salary slip: {str(e)}"}
 
 # Helper function to format student record as JSON
 def format_student_record_json(record):
@@ -159,27 +218,27 @@ def format_student_record_json(record):
         output[section] = section_data
     return output
 
-# Helper to send admin notification for searches
-async def notify_admin(context, user_id, username, query, column, student_name):
+# Helper to send admin notification for searches and salary slips
+async def notify_admin(context, user_id, username, query, column, student_name, action="search"):
     message = (
-        f"📢 New Search by User:\n"
+        f"📢 New {action.title()} by User:\n"
         f"🆔 User ID: {user_id}\n"
         f"🔗 Username: @{username or 'N/A'}\n"
         f"🔍 Query: {query} (in {column})\n"
-        f"👤 Student: {student_name}\n"
+        f"👤 Student/Employee: {student_name}\n"
         f"⏰ Timestamp: {datetime.now().isoformat()}"
     )
     for attempt in range(3):
         try:
             await context.bot.send_message(chat_id=ADMIN_ID, text=message)
-            logger.info(f"Sent admin notification for user {user_id}, student {student_name}")
+            logger.info(f"Sent admin notification for user {user_id}, {action} {student_name}")
             break
         except telegram.error.BadRequest as e:
             logger.error(f"Error sending admin notification for user {user_id}, attempt {attempt + 1}: {e}")
             if attempt == 2:
                 save_log("errors", {
                     "user_id": user_id,
-                    "error": f"Failed to send admin notification for student {student_name} after 3 attempts: {str(e)}",
+                    "error": f"Failed to send admin notification for {action} {student_name} after 3 attempts: {str(e)}",
                     "timestamp": datetime.now().isoformat()
                 })
             await asyncio.sleep(1)
@@ -408,7 +467,7 @@ def load_logs():
     db = get_db()
     try:
         log_doc = db.logs_collection.find_one() or {
-            "access_requests": [], "searches": [], "approvals": [], "feedbacks": [], "errors": []
+            "access_requests": [], "searches": [], "approvals": [], "feedbacks": [], "errors": [], "salary_slips": []
         }
         logger.info(f"Loaded logs: {list(log_doc.keys())}")
         return log_doc
@@ -418,7 +477,7 @@ def load_logs():
             "error": f"Failed to load logs: {str(e)}",
             "timestamp": datetime.now().isoformat()
         })
-        return {"access_requests": [], "searches": [], "approvals": [], "feedbacks": [], "errors": []}
+        return {"access_requests": [], "searches": [], "approvals": [], "feedbacks": [], "errors": [], "salary_slips": []}
 
 def save_log(log_type, log_data):
     db = get_db()
@@ -493,6 +552,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "/name <query> - Search by name\n"
             "/email <query> - Search by email\n"
             "/phone <query> - Search by phone\n"
+            "/downloadone <employee_id> - Get salary slip for an employee\n"
+            "/downloadall <month> <year> - Get salary slips for all employees\n"
             "/profile - View usage stats\n"
             "/feedback <message> - Send feedback\n"
             "/help - Show commands"
@@ -521,7 +582,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     })
                     break
                 except telegram.error.BadRequest as e:
-                    logger.error(f"Error sending access request to admin {ADMIN_ID}, attempt {attempt + 1}: {str(e)}")
+                    logger.error(f"Error sending access request to admin {ADMIN_ID}, attempt {attempt + 1}: {e}")
                     if attempt == 2:
                         await update.message.reply_text("⚠️ Failed to send access request to admin. Please try again later or contact @Darksniperrx.")
                         save_log("errors", {
@@ -552,6 +613,8 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "/name <query> - Search by name\n"
             "/email <query> - Search by email\n"
             "/phone <query> - Search by phone\n"
+            "/downloadone <employee_id> - Get salary slip for an employee\n"
+            "/downloadall <month> <year> - Get salary slips for all employees\n"
             "/listexcel - List available Excel files (admin)\n"
             "/reload - Reload all Excel data (admin)\n"
             "/profile - Your usage stats\n"
@@ -575,6 +638,8 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "/name <query> - Search by name\n"
             "/email <query> - Search by email\n"
             "/phone <query> - Search by phone\n"
+            "/downloadone <employee_id> - Get salary slip for an employee\n"
+            "/downloadall <month> <year> - Get salary slips for all employees\n"
             "/feedback <message> - Send feedback\n"
             "/help - Show this message"
         )
@@ -690,7 +755,7 @@ async def feedback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 )
                 break
             except telegram.error.BadRequest as e:
-                logger.error(f"Error sending feedback to admin {ADMIN_ID}, attempt {attempt + 1}: {str(e)}")
+                logger.error(f"Error sending feedback to admin {ADMIN_ID}, attempt {attempt + 1}: {e}")
                 if attempt == 2:
                     save_log("errors", {
                         "user_id": user_id,
@@ -705,6 +770,141 @@ async def feedback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         save_log("errors", {
             "user_id": user_id,
             "error": f"Feedback command failed: {str(e)}",
+            "timestamp": datetime.now().isoformat()
+        })
+
+async def downloadone(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.message.from_user.id
+    if await check_blocked(user_id, update, context):
+        return
+
+    authorized = load_authorized_users()
+    access_count = load_access_count()
+    user_data = access_count.get(str(user_id), {'count': 0, 'total_limit': 1})
+    count = user_data['count']
+    total_limit = user_data['total_limit']
+    logger.info(f"Downloadone for user {user_id}: count={count}, total_limit={total_limit}")
+
+    if user_id != ADMIN_ID and user_id not in authorized:
+        await update.message.reply_text("🔒 You are not authorized. Use /start to request access.")
+        return
+
+    if user_id != ADMIN_ID and count >= total_limit:
+        await update.message.reply_text(
+            f"⚠️ Your access limit is reached. Current: count={count}, total_limit={total_limit}. Contact @Darksniperrx for more access."
+        )
+        logger.warning(f"Download blocked for user {user_id}: count={count}, total_limit={total_limit}")
+        return
+
+    if len(context.args) != 1:
+        await update.message.reply_text("Usage: /downloadone <employee_id>")
+        return
+
+    employee_id = context.args[0]
+    if not employee_id.isdigit() or not (8000 <= int(employee_id) <= 9200):
+        await update.message.reply_text("❌ Employee ID must be a number between 8000 and 9200.")
+        return
+
+    try:
+        salary_data = fetch_salary_slip(employee_id)
+        if "error" in salary_data:
+            await update.message.reply_text(f"❌ {salary_data['error']}")
+            return
+
+        json_text = json.dumps(salary_data, indent=2, default=str)
+        await update.message.reply_text(
+            f"✅ Salary slip for employee {employee_id}:\n```json\n{json_text}\n```",
+            parse_mode="Markdown"
+        )
+
+        if user_id != ADMIN_ID:
+            if not save_access_count(user_id, count + 1, total_limit):
+                await update.message.reply_text("❌ Error updating access count. Please try again.")
+                return
+            logger.info(f"Incremented access count for user {user_id} to {count + 1}/{total_limit}")
+            await notify_admin(context, user_id, update.message.from_user.username, employee_id, "employee_id", salary_data.get("name", "Unknown"), action="salary slip")
+        
+        save_log("salary_slips", {
+            "user_id": user_id,
+            "employee_id": employee_id,
+            "name": salary_data.get("name", "Unknown"),
+            "timestamp": datetime.now().isoformat()
+        })
+
+    except Exception as e:
+        logger.error(f"Error in downloadone for user {user_id}, employee {employee_id}: {str(e)}")
+        await update.message.reply_text(f"❌ Error fetching salary slip: {str(e)}")
+        save_log("errors", {
+            "user_id": user_id,
+            "error": f"Downloadone failed: {str(e)}",
+            "timestamp": datetime.now().isoformat()
+        })
+
+async def downloadall(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.message.from_user.id
+    if await check_blocked(user_id, update, context):
+        return
+    if user_id != ADMIN_ID:
+        await update.message.reply_text("❌ Only admin can use /downloadall.")
+        return
+
+    if len(context.args) != 2:
+        await update.message.reply_text("Usage: /downloadall <month> <year>")
+        return
+
+    month, year = context.args
+    if not month.isdigit() or not year.isdigit():
+        await update.message.reply_text("❌ Month and year must be numbers.")
+        return
+
+    month = int(month)
+    year = int(year)
+    if not (1 <= month <= 12):
+        await update.message.reply_text("❌ Month must be between 1 and 12.")
+        return
+    if not (2000 <= year <= 2025):
+        await update.message.reply_text("❌ Year must be between 2000 and 2025.")
+        return
+
+    try:
+        salary_slips = []
+        for employee_id in range(8000, 9201):
+            salary_data = fetch_salary_slip(str(employee_id), month=str(month), year=str(year))
+            if "error" not in salary_data:
+                salary_slips.append(salary_data)
+        
+        if not salary_slips:
+            await update.message.reply_text(f"❌ No salary slips found for {month}/{year}.")
+            return
+
+        json_text = json.dumps(salary_slips, indent=2, default=str)
+        if len(json_text) > 4000:  # Telegram message limit
+            json_buffer = io.StringIO(json_text)
+            await update.message.reply_document(
+                document=InputFile(json_buffer, filename=f"salary_slips_{month}_{year}.json"),
+                caption=f"✅ Salary slips for {month}/{year} ({len(salary_slips)} records)."
+            )
+            json_buffer.close()
+        else:
+            await update.message.reply_text(
+                f"✅ Salary slips for {month}/{year} ({len(salary_slips)} records):\n```json\n{json_text}\n```",
+                parse_mode="Markdown"
+            )
+
+        save_log("salary_slips", {
+            "user_id": user_id,
+            "month": month,
+            "year": year,
+            "record_count": len(salary_slips),
+            "timestamp": datetime.now().isoformat()
+        })
+
+    except Exception as e:
+        logger.error(f"Error in downloadall for user {user_id}, month {month}, year {year}: {str(e)}")
+        await update.message.reply_text(f"❌ Error fetching salary slips: {str(e)}")
+        save_log("errors", {
+            "user_id": user_id,
+            "error": f"Downloadall failed: {str(e)}",
             "timestamp": datetime.now().isoformat()
         })
 
@@ -1133,7 +1333,7 @@ async def logs(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         logs = load_logs()
         text = "📜 Recent Logs by sniper:\n"
-        log_types = ["access_requests", "searches", "approvals", "feedbacks", "errors"]
+        log_types = ["access_requests", "searches", "approvals", "feedbacks", "errors", "salary_slips"]
         for log_type in log_types:
             entries = logs.get(log_type, [])
             if entries:
@@ -1168,9 +1368,10 @@ async def analytics(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         db = get_db()
         log_doc = db.logs_collection.find_one() or {
-            "access_requests": [], "searches": [], "approvals": [], "feedbacks": [], "errors": []
+            "access_requests": [], "searches": [], "approvals": [], "feedbacks": [], "errors": [], "salary_slips": []
         }
         total_searches = len(log_doc.get("searches", []))
+        total_salary_slips = len(log_doc.get("salary_slips", []))
         total_feedbacks = db.feedback_collection.count_documents({})
         total_users = db.users_collection.count_documents({})
         total_excel_files = len(get_excel_files())
@@ -1180,6 +1381,7 @@ async def analytics(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"👥 Authorized Users: {total_users}\n"
             f"🚫 Blocked Users: {total_blocked}\n"
             f"🔍 Searches: {total_searches}\n"
+            f"📄 Salary Slips: {total_salary_slips}\n"
             f"📝 Feedbacks: {total_feedbacks}\n"
             f"📄 Excel Files: {total_excel_files}"
         )
@@ -1456,64 +1658,57 @@ async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         "error": f"Failed to notify admin of conflict after 3 attempts: {str(e)}",
                         "timestamp": datetime.now().isoformat()
                     })
-                await asyncio.sleep(1)
 
-async def health_check(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def health(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.message.from_user.id
-    if user_id != ADMIN_ID:
-        await update.message.reply_text("❌ Only admin can run health check.")
+    if await check_blocked(user_id, update, context):
         return
-    
+    if user_id != ADMIN_ID:
+        await update.message.reply_text("❌ Only admin can check bot health.")
+        return
     try:
         db = get_db()
         db.client.admin.command('ping')
-        mongo_status = "✅ Connected"
+        excel_files = get_excel_files()
+        authorized_users = load_authorized_users()
+        access_count = load_access_count()
+        logs = load_logs()
+        response = (
+            f"🩺 Bot Health Check:\n"
+            f"✅ MongoDB: Connected\n"
+            f"📄 Excel Files: {len(excel_files)}\n"
+            f"👥 Authorized Users: {len(authorized_users)}\n"
+            f"🔎 Access Counts: {len(access_count)}\n"
+            f"📜 Log Entries: {sum(len(logs.get(t, [])) for t in ['access_requests', 'searches', 'approvals', 'feedbacks', 'errors', 'salary_slips'])}\n"
+            f"📊 DataFrame Rows: {len(df)}\n"
+            f"⏰ Uptime: {datetime.now() - context.bot_data.get('start_time', datetime.now())}"
+        )
+        await update.message.reply_text(response)
     except Exception as e:
-        mongo_status = f"❌ Error: {str(e)}"
-    
-    df_status = f"✅ Loaded ({len(df)} rows, {len(df.columns) if not df.empty else 0} columns)" if not df.empty else "❌ Empty"
-    
-    try:
-        users_count = db.users_collection.count_documents({})
-        access_count = db.access_collection.count_documents({})
-        feedback_count = db.feedback_collection.count_documents({})
-        collections_status = f"✅ Users: {users_count}, Access: {access_count}, Feedback: {feedback_count}"
-    except Exception as e:
-        collections_status = f"❌ Error: {str(e)}"
-    
-    await update.message.reply_text(
-        f"🏥 Bot Health Status:\n\n"
-        f"🤖 Bot: ✅ Running\n"
-        f"🗄️ MongoDB: {mongo_status}\n"
-        f"📊 DataFrame: {df_status}\n"
-        f"📦 Collections: {collections_status}"
-    )
+        await update.message.reply_text(f"❌ Health check failed: {str(e)}")
+        save_log("errors", {
+            "user_id": user_id,
+            "error": f"Health check failed: {str(e)}",
+            "timestamp": datetime.now().isoformat()
+        })
 
 def main():
-    global df
     try:
-        df = load_excel_on_startup()
-        logger.info(f"Startup successful: DataFrame loaded with {len(df)} rows, columns: {list(df.columns) if not df.empty else 'None'}")
-    except Exception as e:
-        logger.error(f"Startup failed during DataFrame loading: {str(e)}", exc_info=True)
-        df = pd.DataFrame()
-        logger.warning("Using empty DataFrame - Excel loading failed")
-
-    try:
-        logger.info("Building Telegram bot application...")
         app = ApplicationBuilder().token(BOT_TOKEN).build()
+        app.bot_data['start_time'] = datetime.now()
 
-        # Add all command and message handlers
         app.add_handler(CommandHandler("start", start))
         app.add_handler(CommandHandler("help", help_command))
+        app.add_handler(CommandHandler("name", search_name))
+        app.add_handler(CommandHandler("email", search_email))
+        app.add_handler(CommandHandler("phone", search_phone))
+        app.add_handler(CommandHandler("downloadone", downloadone))
+        app.add_handler(CommandHandler("downloadall", downloadall))
         app.add_handler(CommandHandler("listexcel", listexcel))
         app.add_handler(CommandHandler("reload", reload))
         app.add_handler(CommandHandler("profile", profile))
         app.add_handler(CommandHandler("userinfo", userinfo))
         app.add_handler(CommandHandler("feedback", feedback))
-        app.add_handler(CommandHandler("name", search_name))
-        app.add_handler(CommandHandler("email", search_email))
-        app.add_handler(CommandHandler("phone", search_phone))
         app.add_handler(CommandHandler("broadcast", broadcast))
         app.add_handler(CommandHandler("addaccess", addaccess))
         app.add_handler(CommandHandler("block", block))
@@ -1522,22 +1717,29 @@ def main():
         app.add_handler(CommandHandler("analytics", analytics))
         app.add_handler(CommandHandler("replyfeedback", replyfeedback))
         app.add_handler(CommandHandler("exportusers", exportusers))
-        app.add_handler(CommandHandler("health", health_check))
+        app.add_handler(CommandHandler("health", health))
         app.add_handler(MessageHandler(DOCUMENT_FILTER, handle_document))
         app.add_handler(CallbackQueryHandler(callback_handler))
         app.add_error_handler(error_handler)
 
-        logger.info("🤖 sniper's Bot initialized successfully, starting in polling mode...")
-
-        # Run bot in polling mode to avoid webhook issues
-        app.run_polling(
-            poll_interval=1.0,
-            timeout=10,
-            drop_pending_updates=True
-        )
+        logger.info("Starting bot in polling mode...")
+        app.run_polling(allowed_updates=Update.ALL_TYPES)
     except Exception as e:
-        logger.error(f"Bot runtime failed: {str(e)}", exc_info=True)
+        logger.error(f"Fatal error starting bot: {str(e)}")
+        save_log("errors", {
+            "error": f"Fatal error starting bot: {str(e)}",
+            "timestamp": datetime.now().isoformat()
+        })
         raise
 
-if __name__ == '__main__':
-    main()
+if __name__ == "__main__":
+    try:
+        load_excel_on_startup()
+        main()
+    except Exception as e:
+        logger.error(f"Startup error: {str(e)}")
+        save_log("errors", {
+            "error": f"Startup error: {str(e)}",
+            "timestamp": datetime.now().isoformat()
+        })
+        raise
