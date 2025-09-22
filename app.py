@@ -518,14 +518,12 @@ async def downloadone(update: Update, context: ContextTypes.DEFAULT_TYPE):
     count = user_data['count']
     total_limit = user_data['total_limit']
 
-    if user_id != ADMIN_ID and user_id not in authorized:
+    if user_id not in authorized:
         await update.message.reply_text("🔒 You are not authorized. Use /start to request access.")
         return
 
-    # No limit check or increment for admin
-    if user_id != ADMIN_ID and count >= total_limit:
-        await update.message.reply_text(f"⚠️ Limit reached: {count}/{total_limit}")
-        return
+    # No limit check or increment for downloadone - unlimited access for authorized users
+    # Admin already has unlimited access, and now regular authorized users also have unlimited for salary slips
 
     if len(context.args) != 1:
         await update.message.reply_text("Usage: /downloadone <employee_id>")
@@ -557,9 +555,9 @@ async def downloadone(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 caption=f"PDF for {employee_id}"
             )
 
-        # Increment only for non-admin
+        # No access count increment for downloadone - unlimited usage
+        # Only log for admin notification if needed
         if user_id != ADMIN_ID:
-            save_access_count(user_id, count + 1, total_limit)
             await notify_admin(context, user_id, update.message.from_user.username, employee_id, "id", salary_data.get("name", "Unknown"), "salary")
 
         save_log("salary_slips", {"user_id": user_id, "employee_id": employee_id, "name": salary_data.get("name"), "timestamp": datetime.now().isoformat()})
@@ -567,8 +565,6 @@ async def downloadone(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         await update.message.reply_text(f"❌ Error: {str(e)}")
         save_log("errors", {"user_id": user_id, "error": f"Downloadone: {str(e)}"})
-
-# Similar fixes for downloadall if needed, but since it's admin-only, no limit issue
 
 def fetch_salary_slip_with_headers(employee_id: str, month: Optional[str] = None, year: Optional[str] = None) -> tuple:
     """
@@ -901,37 +897,39 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(
             "📋 Bot Commands by sniper:\n"
             "/start - Request access\n"
-            "/name <query> - Search by name\n"
-            "/email <query> - Search by email\n"
-            "/phone <query> - Search by phone\n"
-            "/downloadone <employee_id> - Get salary slip for an employee\n"
-            "/downloadall <month> <year> - Get salary slips for all employees\n"
-            "/listexcel - List available Excel files (admin)\n"
-            "/reload - Reload all Excel data (admin)\n"
-            "/profile - Your usage stats\n"
+            "/name <query> - Search by name (limited)\n"
+            "/email <query> - Search by email (limited)\n"
+            "/phone <query> - Search by phone (limited)\n"
+            "/downloadone <employee_id> - Get salary slip (unlimited for authorized users)\n"
+            "/downloadall <month> <year> - Get all salary slips (admin only)\n"
+            "/listexcel - List Excel files (admin)\n"
+            "/reload - Reload data (admin)\n"
+            "/profile - Usage stats\n"
             "/userinfo <user_id> - View user info (admin)\n"
             "/feedback <message> - Send feedback\n"
-            "/broadcast <msg> - Admin only broadcast\n"
-            "/addaccess <user_id> <count> - Admin adds access count\n"
-            "/block <user_id> - Admin blocks user\n"
-            "/unblock <user_id> - Admin unblocks user\n"
-            "/logs - View recent logs (admin)\n"
-            "/analytics - View bot stats (admin)\n"
-            "/replyfeedback <user_id> <msg> - Reply to feedback (admin)\n"
-            "/exportusers - Export authorized users (admin)\n"
-            "/health - Check bot health (admin)\n"
+            "/broadcast <msg> - Admin broadcast\n"
+            "/addaccess <user_id> <count> - Add search limit (admin)\n"
+            "/block <user_id> - Block user (admin)\n"
+            "/unblock <user_id> - Unblock user (admin)\n"
+            "/logs - View logs (admin)\n"
+            "/analytics - Bot stats (admin)\n"
+            "/replyfeedback <user_id> <msg> - Reply feedback (admin)\n"
+            "/exportusers - Export users (admin)\n"
+            "/health - Check health (admin)\n"
             "/help - Show this message"
         )
     else:
         await update.message.reply_text(
             "📋 Bot Commands by sniper:\n"
             "/start - Request access\n"
-            "/name <query> - Search by name\n"
-            "/email <query> - Search by email\n"
-            "/phone <query> - Search by phone\n"
-            "/downloadone <employee_id> - Get salary slip for an employee\n"
+            "/name <query> - Search by name \n"
+            "/email <query> - Search by email \n"
+            "/phone <query> - Search by phone \n"
+            "/downloadone <employee_id> - Get salary slip \n"
+            "employee_id=(8000-9200)\n"
             "/feedback <message> - Send feedback\n"
-            "/help - Show this message"
+            "/help - Show this message\n\n"
+            "💡 Note: Salary slip access is unlimited for authorized users!"
         )
 
 async def listexcel(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -967,17 +965,29 @@ async def profile(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if user_id not in authorized and user_id != ADMIN_ID:
         await update.message.reply_text("🔒 You are not authorized. Use /start to request access.")
         return
+    
     access_count = load_access_count()
     user_data = access_count.get(str(user_id), {'count': 0, 'total_limit': 1})
     count = user_data['count']
     total_limit = user_data['total_limit']
-    remaining = max(0, user_data['total_limit'] - count) if user_id != ADMIN_ID else "Unlimited"
-    await update.message.reply_text(
-        f"👤 User ID: {user_id}\n"
-        f"🔎 Searches used: {count}\n"
-        f"📊 Total limit: {total_limit}\n"
-        f"📉 Remaining: {remaining}"
-    )
+    remaining = max(0, total_limit - count) if user_id != ADMIN_ID else "Unlimited"
+    
+    if user_id == ADMIN_ID:
+        await update.message.reply_text(
+            f"👤 User ID: {user_id}\n"
+            f"🔎 Search limit: Unlimited\n"
+            f"📄 Salary slips: Unlimited\n"
+            f"💰 Access type: Admin"
+        )
+    else:
+        await update.message.reply_text(
+            f"👤 User ID: {user_id}\n"
+            f"🔎 Searches used: {count}\n"
+            f"📊 Search limit: {total_limit}\n"
+            f"📉 Search remaining: {remaining}\n"
+            f"📄 Salary slips: Unlimited\n"
+            f"💰 Access type: Authorized User"
+        )
 
 async def userinfo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.message.from_user.id
