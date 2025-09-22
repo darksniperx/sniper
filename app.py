@@ -134,14 +134,14 @@ def load_all_excels():
                 excel_dfs = pd.read_excel(file_stream, sheet_name=None, engine='openpyxl')
                 for sheet_name, sheet_df in excel_dfs.items():
                     if not sheet_df.empty:
-                        logger.info(f"Loaded sheet '{sheet_name}' from {filename} with {len(sheet_df)} rows")
+                        logger.info(f"Loaded sheet '{sheet_name}' from {filename} with {len(sheet_df)} rows, columns: {list(sheet_df.columns)}")
                         dfs.append(sheet_df)
                     else:
                         logger.warning(f"Sheet '{sheet_name}' in {filename} is empty")
             else:
-                logger.warning(f"No data found for {filename} in GridFS")
+                logger.error(f"No data found for {filename} in GridFS")
         except Exception as e:
-            logger.error(f"Error loading excel {filename}: {e}")
+            logger.error(f"Error loading excel {filename}: {str(e)}", exc_info=True)
     
     if dfs:
         try:
@@ -156,7 +156,7 @@ def load_all_excels():
             logger.info(f"Deduplication: Removed {duplicates_removed} duplicate rows. Final DataFrame has {final_rows} rows.")
             return combined_df
         except Exception as e:
-            logger.error(f"Error combining DataFrames: {str(e)}")
+            logger.error(f"Error combining DataFrames: {str(e)}", exc_info=True)
             return pd.DataFrame()
     logger.warning("No data loaded into DataFrame")
     return pd.DataFrame()
@@ -1278,16 +1278,16 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
             else:
                 await update.message.reply_text(f"✅ All required columns found in {file_name}.")
 
-            # Reset stream for writing
             xlsx_stream = io.BytesIO()
             csv_df.to_excel(xlsx_stream, index=False, engine='openpyxl')
             xlsx_stream.seek(0)
             xlsx_file_name = file_name.rsplit('.', 1)[0] + '.xlsx'
-            save_excel_to_gridfs(xlsx_stream.getvalue(), xlsx_file_name)  # Use getvalue() to get bytes
+            save_excel_to_gridfs(xlsx_stream.getvalue(), xlsx_file_name)
+            logger.info(f"Successfully saved {xlsx_file_name} to GridFS")
             await update.message.reply_text(f"✅ CSV file {file_name} converted to {xlsx_file_name} and uploaded.")
         else:
             excel_dfs = pd.read_excel(file_stream, sheet_name=None, engine='openpyxl')
-            file_stream.seek(0)  # Ensure stream is at start
+            file_stream.seek(0)
             columns_found = set()
             row_counts = []
             for sheet_name, sheet_df in excel_dfs.items():
@@ -1308,16 +1308,15 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
             else:
                 await update.message.reply_text(f"✅ All required columns found in {file_name}.")
 
-            # Save the modified Excel with all sheets
             output_stream = io.BytesIO()
             with pd.ExcelWriter(output_stream, engine='openpyxl') as writer:
                 for sheet_name, sheet_df in excel_dfs.items():
                     sheet_df.to_excel(writer, sheet_name=sheet_name, index=False)
             output_stream.seek(0)
             save_excel_to_gridfs(output_stream.getvalue(), file_name)
+            logger.info(f"Successfully saved {file_name} to GridFS")
             await update.message.reply_text(f"✅ Excel file {file_name} uploaded with updated columns.")
 
-        # Reload and validate DataFrame
         global df
         df = load_all_excels()
         if df.empty:
@@ -1328,7 +1327,7 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     except Exception as e:
         error_msg = f"❌ Error processing file {file_name}: {str(e)}"
-        logger.error(error_msg, exc_info=True)  # Include full traceback in logs
+        logger.error(error_msg, exc_info=True)
         await update.message.reply_text(error_msg)
         save_log("errors", {
             "user_id": user_id,
