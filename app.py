@@ -17,6 +17,14 @@ import logging
 import asyncio
 import io
 from typing import Dict, List, Any, Optional
+import logging
+
+# logger setup
+logging.basicConfig(
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    level=logging.INFO
+)
+logger = logging.getLogger(__name__)
 
 # Optional PDF support
 try:
