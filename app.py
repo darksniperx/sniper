@@ -529,13 +529,14 @@ async def downloadone(update: Update, context: ContextTypes.DEFAULT_TYPE):
     total_limit = user_data['total_limit']
     logger.info(f"Downloadone for user {user_id}: count={count}, total_limit={total_limit}")
 
+    # No limit for admin (user_id == ADMIN_ID)
     if user_id != ADMIN_ID and user_id not in authorized:
         await update.message.reply_text("🔒 You are not authorized. Use /start to request access.")
         return
 
-    if user_id != ADMIN_ID and count >= total_limit:
+    if user_id != ADMIN_ID and count >= total_limit and user_id != ADMIN_ID:
         await update.message.reply_text(
-            f"⚠️ Your access limit is reached. Current: count={count}, total_limit={total_limit}. Contact @Darksniperrx for more access."
+            f"⚠️ Your access limit is reached. Contact @Darksniperrx for more access."
         )
         logger.warning(f"Download blocked for user {user_id}: count={count}, total_limit={total_limit}")
         return
@@ -555,7 +556,42 @@ async def downloadone(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text(f"❌ {salary_data['error']}")
             return
 
-        json_text = json.dumps({k: v for k, v in salary_data.items() if k != "pdf_data"}, indent=2, default=str)
+        # Enhanced salary data with additional fields
+        enhanced_salary_data = {
+            "employee_id": employee_id,
+            "name": salary_data.get("name", "Unknown"),
+            "month": salary_data.get("month", "N/A"),
+            "year": salary_data.get("year", "N/A"),
+            "basic_salary": salary_data.get("basic_salary", "N/A"),
+            "allowances": salary_data.get("allowances", "N/A"),
+            "deductions": salary_data.get("deductions", "N/A"),
+            "net_salary": salary_data.get("net_salary", "N/A"),
+            "gross_salary": "N/A",  # Added field
+            "tax_deductions": "N/A",  # Added field
+            "bonus": "N/A",  # Added field
+            "leave_deductions": "N/A"  # Added field
+        }
+
+        # Attempt to extract additional fields from text if available
+        if 'application/pdf' in response.headers.get('content-type', '').lower() and PDF_SUPPORT and salary_data.get("pdf_data"):
+            pdf_buffer = io.BytesIO(salary_data["pdf_data"])
+            with pdfplumber.open(pdf_buffer) as pdf:
+                text = ""
+                for page in pdf.pages:
+                    text += page.extract_text() or ""
+                lines = text.split('\n')
+                for line in lines:
+                    line = line.strip().lower()
+                    if 'gross salary' in line:
+                        enhanced_salary_data["gross_salary"] = line.split(':', 1)[-1].strip() or "N/A"
+                    elif 'tax deductions' in line:
+                        enhanced_salary_data["tax_deductions"] = line.split(':', 1)[-1].strip() or "N/A"
+                    elif 'bonus' in line:
+                        enhanced_salary_data["bonus"] = line.split(':', 1)[-1].strip() or "N/A"
+                    elif 'leave deductions' in line:
+                        enhanced_salary_data["leave_deductions"] = line.split(':', 1)[-1].strip() or "N/A"
+
+        json_text = json.dumps(enhanced_salary_data, indent=2, default=str)
         await update.message.reply_text(
             f"✅ Salary slip for employee {employee_id}:\n```json\n{json_text}\n```",
             parse_mode="Markdown"
@@ -574,12 +610,12 @@ async def downloadone(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await update.message.reply_text("❌ Error updating access count. Please try again.")
                 return
             logger.info(f"Incremented access count for user {user_id} to {count + 1}/{total_limit}")
-            await notify_admin(context, user_id, update.message.from_user.username, employee_id, "employee_id", salary_data.get("name", "Unknown"), action="salary slip")
+            await notify_admin(context, user_id, update.message.from_user.username, employee_id, "employee_id", enhanced_salary_data.get("name", "Unknown"), action="salary slip")
         
         save_log("salary_slips", {
             "user_id": user_id,
             "employee_id": employee_id,
-            "name": salary_data.get("name", "Unknown"),
+            "name": enhanced_salary_data.get("name", "Unknown"),
             "timestamp": datetime.now().isoformat()
         })
 
@@ -627,7 +663,38 @@ async def downloadall(update: Update, context: ContextTypes.DEFAULT_TYPE):
             for employee_id in range(8000, 9201):
                 salary_data = fetch_salary_slip(str(employee_id), month=str(month), year=str(year))
                 if "error" not in salary_data:
-                    salary_slips.append({k: v for k, v in salary_data.items() if k != "pdf_data"})
+                    enhanced_salary_data = {
+                        "employee_id": employee_id,
+                        "name": salary_data.get("name", "Unknown"),
+                        "month": month,
+                        "year": year,
+                        "basic_salary": salary_data.get("basic_salary", "N/A"),
+                        "allowances": salary_data.get("allowances", "N/A"),
+                        "deductions": salary_data.get("deductions", "N/A"),
+                        "net_salary": salary_data.get("net_salary", "N/A"),
+                        "gross_salary": "N/A",
+                        "tax_deductions": "N/A",
+                        "bonus": "N/A",
+                        "leave_deductions": "N/A"
+                    }
+                    if 'application/pdf' in response.headers.get('content-type', '').lower() and PDF_SUPPORT and salary_data.get("pdf_data"):
+                        pdf_buffer = io.BytesIO(salary_data["pdf_data"])
+                        with pdfplumber.open(pdf_buffer) as pdf:
+                            text = ""
+                            for page in pdf.pages:
+                                text += page.extract_text() or ""
+                            lines = text.split('\n')
+                            for line in lines:
+                                line = line.strip().lower()
+                                if 'gross salary' in line:
+                                    enhanced_salary_data["gross_salary"] = line.split(':', 1)[-1].strip() or "N/A"
+                                elif 'tax deductions' in line:
+                                    enhanced_salary_data["tax_deductions"] = line.split(':', 1)[-1].strip() or "N/A"
+                                elif 'bonus' in line:
+                                    enhanced_salary_data["bonus"] = line.split(':', 1)[-1].strip() or "N/A"
+                                elif 'leave deductions' in line:
+                                    enhanced_salary_data["leave_deductions"] = line.split(':', 1)[-1].strip() or "N/A"
+                    salary_slips.append(enhanced_salary_data)
                     if PDF_SUPPORT and salary_data.get("pdf_data"):
                         pdf_filename = f"salary_slip_{employee_id}_{month}_{year}.pdf"
                         zip_file.writestr(pdf_filename, salary_data["pdf_data"])
@@ -671,6 +738,8 @@ async def downloadall(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "error": f"Downloadall failed: {str(e)}",
             "timestamp": datetime.now().isoformat()
         })
+
+# Rest of the code (check_blocked, notify_admin, etc.) remains unchanged
 
 async def check_blocked(user_id, update, context):
     blocked = load_blocked_users()
