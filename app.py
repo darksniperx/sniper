@@ -17,14 +17,7 @@ import logging
 import asyncio
 import io
 from typing import Dict, List, Any, Optional
-import logging
 
-# logger setup
-logging.basicConfig(
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    level=logging.INFO
-)
-logger = logging.getLogger(__name__)
 
 # Optional PDF support
 try:
@@ -1680,56 +1673,50 @@ def main():
     global df
     try:
         df = load_excel_on_startup()
-        logger.info(f"Startup successful: DataFrame loaded with {len(df)} rows")
+        logger.info(f"Startup successful: DataFrame loaded with {len(df)} rows, columns: {list(df.columns) if not df.empty else 'None'}")
     except Exception as e:
         logger.error(f"Startup failed during DataFrame loading: {str(e)}", exc_info=True)
         df = pd.DataFrame()
         logger.warning("Using empty DataFrame - Excel loading failed")
-    
-    app = ApplicationBuilder().token(BOT_TOKEN).build()
 
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("help", help_command))
-    app.add_handler(CommandHandler("listexcel", listexcel))
-    app.add_handler(CommandHandler("reload", reload))
-    app.add_handler(CommandHandler("profile", profile))
-    app.add_handler(CommandHandler("userinfo", userinfo))
-    app.add_handler(CommandHandler("feedback", feedback))
-    app.add_handler(CommandHandler("name", search_name))
-    app.add_handler(CommandHandler("email", search_email))
-    app.add_handler(CommandHandler("phone", search_phone))
-    app.add_handler(CommandHandler("downloadone", download_one))
-    app.add_handler(CommandHandler("downloadall", download_all))
-    app.add_handler(CommandHandler("broadcast", broadcast))
-    app.add_handler(CommandHandler("addaccess", addaccess))
-    app.add_handler(CommandHandler("block", block))
-    app.add_handler(CommandHandler("unblock", unblock))
-    app.add_handler(CommandHandler("logs", logs))
-    app.add_handler(CommandHandler("analytics", analytics))
-    app.add_handler(CommandHandler("replyfeedback", replyfeedback))
-    app.add_handler(CommandHandler("exportusers", exportusers))
-    app.add_handler(CommandHandler("health", health_check))
-    app.add_handler(MessageHandler(DOCUMENT_FILTER, handle_document))
-    app.add_handler(CallbackQueryHandler(callback_handler))
-    app.add_error_handler(error_handler)
-
-    logger.info("🤖 sniper's Bot running...")
-    
     try:
-        if USE_WEBHOOK:
-            if not WEBHOOK_URL or not WEBHOOK_URL.startswith('https://'):
-                logger.error("Invalid WEBHOOK_URL: Must be HTTPS for webhook mode")
-                raise ValueError("WEBHOOK_URL must be a valid HTTPS URL")
-            logger.info(f"Starting webhook mode on {WEBHOOK_URL}")
-            app.run_webhook(
-                listen="0.0.0.0",
-                port=PORT,
-                url_path=BOT_TOKEN,
-                webhook_url=f"{WEBHOOK_URL}/{BOT_TOKEN}"
-            )
-        else:
-            logger.info("Starting polling mode")
-            app.run_polling()
+        logger.info("Building Telegram bot application...")
+        app = ApplicationBuilder().token(BOT_TOKEN).build()
+
+        # Add all command and message handlers
+        app.add_handler(CommandHandler("start", start))
+        app.add_handler(CommandHandler("help", help_command))
+        app.add_handler(CommandHandler("listexcel", listexcel))
+        app.add_handler(CommandHandler("reload", reload))
+        app.add_handler(CommandHandler("profile", profile))
+        app.add_handler(CommandHandler("userinfo", userinfo))
+        app.add_handler(CommandHandler("feedback", feedback))
+        app.add_handler(CommandHandler("name", search_name))
+        app.add_handler(CommandHandler("email", search_email))
+        app.add_handler(CommandHandler("phone", search_phone))
+        app.add_handler(CommandHandler("downloadone", download_one))
+        app.add_handler(CommandHandler("downloadall", download_all))
+        app.add_handler(CommandHandler("broadcast", broadcast))
+        app.add_handler(CommandHandler("addaccess", addaccess))
+        app.add_handler(CommandHandler("block", block))
+        app.add_handler(CommandHandler("unblock", unblock))
+        app.add_handler(CommandHandler("logs", logs))
+        app.add_handler(CommandHandler("analytics", analytics))
+        app.add_handler(CommandHandler("replyfeedback", replyfeedback))
+        app.add_handler(CommandHandler("exportusers", exportusers))
+        app.add_handler(CommandHandler("health", health_check))
+        app.add_handler(MessageHandler(DOCUMENT_FILTER, handle_document))
+        app.add_handler(CallbackQueryHandler(callback_handler))
+        app.add_error_handler(error_handler)
+
+        logger.info("🤖 sniper's Bot initialized successfully, starting in polling mode...")
+
+        # Run bot in polling mode to avoid webhook issues
+        app.run_polling(
+            poll_interval=1.0,
+            timeout=10,
+            drop_pending_updates=True
+        )
     except Exception as e:
         logger.error(f"Bot runtime failed: {str(e)}", exc_info=True)
         raise
