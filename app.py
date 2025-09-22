@@ -1,5 +1,4 @@
 import os
-import requests
 import pandas as pd
 from datetime import datetime
 import telegram
@@ -16,19 +15,10 @@ import time
 import logging
 import asyncio
 import io
+import json
 from typing import Dict, List, Any, Optional
 
-
-# Optional PDF support
-try:
-    import pdfplumber
-    PDF_SUPPORT = True
-    logger.info("PDF support enabled with pdfplumber")
-except ImportError:
-    PDF_SUPPORT = False
-    logger.warning("pdfplumber not installed - PDF download features disabled")
-
-# Configure logging
+# Configure logging at the very top
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     level=logging.INFO
@@ -59,17 +49,9 @@ try:
     ADMIN_ID = int(get_env_var('ADMIN_ID'))
     MONGO_URI = get_env_var('MONGO_URI')
     MONGO_DB = get_env_var('MONGO_DB', 'telegram_bot')
-    PORT = int(get_env_var('PORT', '8443'))
-    WEBHOOK_URL = get_env_var('WEBHOOK_URL', '')
-    USE_WEBHOOK = WEBHOOK_URL.lower() == 'true'
 except ValueError as e:
     logger.error(f"Configuration error: {e}")
     raise
-
-# Constants for PDF downloading
-BASE_URL = "http://erp.imsec.ac.in/salary_slip/print_salary_slip/"
-SAVE_DIR = "salary_slips"
-os.makedirs(SAVE_DIR, exist_ok=True)
 
 # MongoDB Setup
 class MongoDBManager:
@@ -122,8 +104,8 @@ mongo_manager = MongoDBManager()
 # GLOBAL DATA
 df = pd.DataFrame()
 
-# Helper function to format student record
-def format_student_record(record):
+# Helper function to format student record as JSON
+def format_student_record_json(record):
     sections = {
         "Personal Details": [
             "Name", "Gender", "Category", "Date Of Birth", "Religion", "Nationality", "Blood Group",
@@ -166,76 +148,16 @@ def format_student_record(record):
             "Diploma Max. Marks", "Diploma Percent Marks", "SR No."
         ]
     }
-    emojis = {
-        "Personal Details": "👤",
-        "Academic Details": "🎓",
-        "School & Marks": "🏫",
-        "Family Details": "👨‍👩‍👧",
-        "Address": "🏠",
-        "Hostel & Other Details": "🛏"
-    }
-
-    output = []
+    output = {}
     for section, fields in sections.items():
-        section_output = [f"{emojis[section]} {section}:"]
+        section_data = {}
         for field in fields:
             value = record.get(field, "Not Available")
             if pd.isna(value) or value == "":
                 value = "Not Available"
-            section_output.append(f"- {field}: {value}")
-        output.append("\n".join(section_output))
-    
+            section_data[field] = value
+        output[section] = section_data
     return output
-
-# Helper to extract name from PDF
-def extract_name_from_pdf(file_path):
-    """Extract sender's name from the PDF using pdfplumber."""
-    if not PDF_SUPPORT:
-        logger.warning("Cannot extract name - pdfplumber not installed")
-        return None
-    try:
-        with pdfplumber.open(file_path) as pdf:
-            first_page = pdf.pages[0]
-            text = first_page.extract_text()
-            for line in text.split('\n'):
-                if "Name:" in line:
-                    return line.split("Name:")[1].strip()
-            return None
-    except Exception as e:
-        logger.error(f"Error extracting name from PDF: {str(e)}")
-        return None
-
-# Helper to download PDF
-def download_pdf(emp_id):
-    """Download PDF for an employee ID and save it locally."""
-    if not PDF_SUPPORT:
-        logger.error("PDF support not available - install pdfplumber")
-        return None
-    url = f"{BASE_URL}{emp_id}"
-    headers = {"User-Agent": "Mozilla/5.0"}
-    try:
-        res = requests.get(url, headers=headers, timeout=10)
-        if "application/pdf" in res.headers.get("Content-Type", ""):
-            temp_filename = os.path.join(SAVE_DIR, f"temp_{emp_id}.pdf")
-            with open(temp_filename, "wb") as f:
-                f.write(res.content)
-            
-            sender_name = extract_name_from_pdf(temp_filename)
-            if sender_name:
-                sender_name = ''.join(c for c in sender_name if c.isalnum() or c in (' ', '_')).replace(' ', '_')
-                filename = os.path.join(SAVE_DIR, f"{sender_name}_{emp_id}.pdf")
-            else:
-                filename = os.path.join(SAVE_DIR, f"sniper_{emp_id}.pdf")
-            
-            os.rename(temp_filename, filename)
-            logger.info(f"Downloaded PDF for emp_id {emp_id} to {filename}")
-            return filename
-        else:
-            logger.warning(f"No PDF found for emp_id {emp_id}")
-            return None
-    except Exception as e:
-        logger.error(f"Error downloading PDF for emp_id {emp_id}: {str(e)}")
-        return None
 
 # Helper to send admin notification for searches
 async def notify_admin(context, user_id, username, query, column, student_name):
@@ -260,27 +182,6 @@ async def notify_admin(context, user_id, username, query, column, student_name):
                     "error": f"Failed to send admin notification for student {student_name} after 3 attempts: {str(e)}",
                     "timestamp": datetime.now().isoformat()
                 })
-            await asyncio.sleep(1)
-
-# Helper for PDF download notifications (no MongoDB logging)
-async def notify_admin_pdf(context: ContextTypes.DEFAULT_TYPE, user_id: int, username: str, action: str):
-    """Notify admin of PDF download actions via Telegram without logging to MongoDB."""
-    message = (
-        f"📢 New Action by User:\n"
-        f"🆔 User ID: {user_id}\n"
-        f"🔗 Username: @{username or 'N/A'}\n"
-        f"🎯 Action: {action}\n"
-        f"⏰ Timestamp: {datetime.now().isoformat()}"
-    )
-    for attempt in range(3):
-        try:
-            await context.bot.send_message(chat_id=ADMIN_ID, text=message)
-            logger.info(f"Sent admin notification for user {user_id}, action {action}")
-            break
-        except telegram.error.BadRequest as e:
-            logger.error(f"Error sending admin notification for user {user_id}, attempt {attempt + 1}: {e}")
-            if attempt == 2:
-                logger.error(f"Failed to send admin notification for user {user_id} after 3 attempts: {str(e)}")
             await asyncio.sleep(1)
 
 # MongoDB Helper Functions
@@ -592,7 +493,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "/name <query> - Search by name\n"
             "/email <query> - Search by email\n"
             "/phone <query> - Search by phone\n"
-            "/downloadone <id> (8000-9200) - Download salary slip PDF\n"
             "/profile - View usage stats\n"
             "/feedback <message> - Send feedback\n"
             "/help - Show commands"
@@ -652,8 +552,6 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "/name <query> - Search by name\n"
             "/email <query> - Search by email\n"
             "/phone <query> - Search by phone\n"
-            "/downloadone <id> (8000-9200) - Download salary slip PDF\n"
-            "/downloadall <start> <end> (9000-9200) - Download multiple salary slip PDFs (admin only)\n"
             "/listexcel - List available Excel files (admin)\n"
             "/reload - Reload all Excel data (admin)\n"
             "/profile - Your usage stats\n"
@@ -677,7 +575,6 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "/name <query> - Search by name\n"
             "/email <query> - Search by email\n"
             "/phone <query> - Search by phone\n"
-            "/downloadone <id> (8000-9200) - Download salary slip PDF\n"
             "/feedback <message> - Send feedback\n"
             "/help - Show this message"
         )
@@ -878,9 +775,12 @@ async def perform_search(update: Update, context: ContextTypes.DEFAULT_TYPE, col
             logger.info(f"Incremented search count for user {user_id} to {count + 1}/{total_limit} for single result")
 
         if len(matches) == 1:
-            formatted_sections = format_student_record(matches.iloc[0])
-            for section in formatted_sections:
-                await update.message.reply_text(section)
+            json_output = format_student_record_json(matches.iloc[0])
+            json_text = json.dumps(json_output, indent=2, default=str)
+            await update.message.reply_text(
+                f"✅ Found 1 match for '{query}' in {column}:\n```json\n{json_text}\n```",
+                parse_mode="Markdown"
+            )
             if user_id != ADMIN_ID:
                 student_name = matches.iloc[0].get('Name', 'Unknown')
                 await notify_admin(context, user_id, update.message.from_user.username, query, column, student_name)
@@ -960,89 +860,6 @@ async def search_email(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def search_phone(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await perform_search(update, context, 'Student Mobile')
-
-async def download_one(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.message.from_user.id
-    if await check_blocked(user_id, update, context):
-        return
-
-    authorized = load_authorized_users()
-    if user_id not in authorized and user_id != ADMIN_ID:
-        await update.message.reply_text("🔒 You are not authorized. Use /start to request access.")
-        return
-
-    if len(context.args) != 1:
-        await update.message.reply_text("❗ Usage: /downloadone <id> (8000-9200)")
-        return
-
-    try:
-        emp_id = int(context.args[0])
-        if not (8000 <= emp_id <= 9200):
-            await update.message.reply_text("❗ Employee ID must be between 8000 and 9200.")
-            return
-    except ValueError:
-        await update.message.reply_text("❗ Please provide a valid employee ID.")
-        return
-
-    try:
-        file_path = download_pdf(emp_id)
-        if file_path:
-            filename = os.path.basename(file_path)
-            await update.message.reply_document(
-                document=open(file_path, "rb"),
-                filename=filename,
-                caption=f"✅ Salary slip for employee ID {emp_id}"
-            )
-            action = f"Downloaded PDF for emp_id {emp_id} ({filename})"
-            await notify_admin_pdf(context, user_id, update.message.from_user.username, action)
-        else:
-            await update.message.reply_text(f"❌ PDF not found for employee ID {emp_id}.")
-    except Exception as e:
-        logger.error(f"Error in download_one for user {user_id}, emp_id {emp_id}: {str(e)}")
-        await update.message.reply_text(f"❌ Error downloading PDF: {str(e)}")
-
-async def download_all(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.message.from_user.id
-    if await check_blocked(user_id, update, context):
-        return
-    if user_id != ADMIN_ID:
-        await update.message.reply_text("❌ Only admin can use this command.")
-        return
-
-    if len(context.args) != 2:
-        await update.message.reply_text("❗ Usage: /downloadall <start> <end> (9000-9200)")
-        return
-
-    try:
-        start_id = int(context.args[0])
-        end_id = int(context.args[1])
-        if not (9000 <= start_id <= end_id <= 9200):
-            await update.message.reply_text("❗ Start and end IDs must be between 9000 and 9200, and start ID must be <= end ID.")
-            return
-    except ValueError:
-        await update.message.reply_text("❗ Please provide valid start and end IDs.")
-        return
-
-    await update.message.reply_text(f"⏬ Downloading PDFs from {start_id} to {end_id}...")
-
-    for emp_id in range(start_id, end_id + 1):
-        try:
-            file_path = download_pdf(emp_id)
-            if file_path:
-                filename = os.path.basename(file_path)
-                await update.message.reply_document(
-                    document=open(file_path, "rb"),
-                    filename=filename,
-                    caption=f"✅ Salary slip for employee ID {emp_id}"
-                )
-                action = f"Downloaded PDF for emp_id {emp_id} ({filename})"
-                await notify_admin_pdf(context, user_id, update.message.from_user.username, action)
-            else:
-                await update.message.reply_text(f"❌ PDF not found for employee ID {emp_id}.")
-            await asyncio.sleep(0.5)
-        except Exception as e:
-            logger.error(f"Error downloading PDF for emp_id {emp_id}: {str(e)}")
-            await update.message.reply_text(f"❌ Error downloading PDF for employee ID {emp_id}: {str(e)}")
 
 async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.message.from_user.id
@@ -1567,9 +1384,12 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 })
                 return
             selected_record = search_results[idx]
-            formatted_sections = format_student_record(selected_record)
-            for section in formatted_sections:
-                await query.message.reply_text(section)
+            json_output = format_student_record_json(selected_record)
+            json_text = json.dumps(json_output, indent=2, default=str)
+            await query.message.reply_text(
+                f"✅ Selected record:\n```json\n{json_text}\n```",
+                parse_mode="Markdown"
+            )
             await query.edit_message_text(f"✅ Details sent for selected record.")
             if user_id != ADMIN_ID:
                 if not save_access_count(user_id, count + 1, total_limit):
@@ -1694,8 +1514,6 @@ def main():
         app.add_handler(CommandHandler("name", search_name))
         app.add_handler(CommandHandler("email", search_email))
         app.add_handler(CommandHandler("phone", search_phone))
-        app.add_handler(CommandHandler("downloadone", download_one))
-        app.add_handler(CommandHandler("downloadall", download_all))
         app.add_handler(CommandHandler("broadcast", broadcast))
         app.add_handler(CommandHandler("addaccess", addaccess))
         app.add_handler(CommandHandler("block", block))
@@ -1720,3 +1538,6 @@ def main():
     except Exception as e:
         logger.error(f"Bot runtime failed: {str(e)}", exc_info=True)
         raise
+
+if __name__ == '__main__':
+    main()
