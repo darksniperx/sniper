@@ -841,7 +841,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "/name <query> - Search by name\n"
             "/email <query> - Search by email\n"
             "/phone <query> - Search by phone\n"
-            "/downloadone <employee_id> - Get salary slip for an employee\n"
+             "/downloadone <employee_id> - Get salary slip \n"
+            "employee_id=(8000-9200)\n"
+            "/profile - Check you profile\n"
             "/feedback <message> - Send feedback\n"
             "/help - Show commands"
         )
@@ -927,6 +929,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "/phone <query> - Search by phone \n"
             "/downloadone <employee_id> - Get salary slip \n"
             "employee_id=(8000-9200)\n"
+            "/profile - Check you profile\n"
             "/feedback <message> - Send feedback\n"
             "/help - Show this message\n\n"
             "💡 Note: Salary slip access is unlimited for authorized users!"
