@@ -126,41 +126,52 @@ def get_db():
 def load_all_excels():
     db = get_db()
     dfs = []
-    for filename in get_excel_files():
+    excel_files = get_excel_files()
+    logger.info(f"Available Excel files: {excel_files}")
+    for filename in excel_files:
         try:
             file_data = db.fs.find_one({"filename": filename})
             if file_data:
+                logger.info(f"Processing file: {filename}, size: {file_data.length} bytes")
                 file_stream = io.BytesIO(file_data.read())
                 excel_dfs = pd.read_excel(file_stream, sheet_name=None, engine='openpyxl')
                 for sheet_name, sheet_df in excel_dfs.items():
                     if not sheet_df.empty:
+                        required_columns = {'Name', 'Student Email', 'Student Mobile', 'Course'}
+                        missing = required_columns - set(sheet_df.columns)
+                        if missing:
+                            logger.warning(f"Sheet '{sheet_name}' in {filename} missing columns: {', '.join(missing)}. Adding 'N/A'.")
+                            for col in missing:
+                                sheet_df[col] = "N/A"
                         logger.info(f"Loaded sheet '{sheet_name}' from {filename} with {len(sheet_df)} rows, columns: {list(sheet_df.columns)}")
                         dfs.append(sheet_df)
                     else:
-                        logger.warning(f"Sheet '{sheet_name}' in {filename} is empty")
+                        logger.warning(f"Sheet '{sheet_name}' in {filename} is empty, skipping")
             else:
-                logger.error(f"No data found for {filename} in GridFS")
+                logger.error(f"No data found for {filename} in GridFS despite being listed")
         except Exception as e:
             logger.error(f"Error loading excel {filename}: {str(e)}", exc_info=True)
+            continue  # Skip this file and proceed with others
     
-    if dfs:
-        try:
-            combined_df = pd.concat(dfs, ignore_index=True)
-            logger.info(f"Combined DataFrame with {len(combined_df)} rows and columns: {list(combined_df.columns)}")
-            for col in combined_df.select_dtypes(include=['object']).columns:
-                combined_df[col] = combined_df[col].str.lower()
-            initial_rows = len(combined_df)
-            combined_df = combined_df.drop_duplicates()
-            final_rows = len(combined_df)
-            duplicates_removed = initial_rows - final_rows
-            logger.info(f"Deduplication: Removed {duplicates_removed} duplicate rows. Final DataFrame has {final_rows} rows.")
-            return combined_df
-        except Exception as e:
-            logger.error(f"Error combining DataFrames: {str(e)}", exc_info=True)
-            return pd.DataFrame()
-    logger.warning("No data loaded into DataFrame")
-    return pd.DataFrame()
+    if not dfs:
+        logger.warning("No valid data frames loaded from any Excel files")
+        return pd.DataFrame()
 
+    try:
+        combined_df = pd.concat(dfs, ignore_index=True)
+        logger.info(f"Initial combined DataFrame: {len(combined_df)} rows, columns: {list(combined_df.columns)}")
+        for col in combined_df.select_dtypes(include=['object']).columns:
+            combined_df[col] = combined_df[col].str.lower().fillna("n/a")
+        initial_rows = len(combined_df)
+        combined_df = combined_df.drop_duplicates(subset=['Name', 'Student Email', 'Student Mobile', 'Course'])
+        final_rows = len(combined_df)
+        duplicates_removed = initial_rows - final_rows
+        logger.info(f"Deduplication: Removed {duplicates_removed} duplicate rows. Final DataFrame has {final_rows} rows.")
+        return combined_df
+    except Exception as e:
+        logger.error(f"Error combining DataFrames: {str(e)}", exc_info=True)
+        return pd.DataFrame()
+    
 def save_excel_to_gridfs(file_data, filename):
     db = get_db()
     try:
@@ -1318,6 +1329,7 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text(f"✅ Excel file {file_name} uploaded with updated columns.")
 
         global df
+        logger.info("Reloading DataFrame after file upload...")
         df = load_all_excels()
         if df.empty:
             logger.error(f"DataFrame is empty after reloading for file {file_name}")
@@ -1334,6 +1346,7 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "error": f"File upload failed: {str(e)}",
             "timestamp": datetime.now().isoformat()
         })
+        
 async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.message.from_user.id
     if await check_blocked(user_id, update, context):
