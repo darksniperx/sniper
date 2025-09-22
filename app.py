@@ -1169,18 +1169,39 @@ async def perform_search(update: Update, context: ContextTypes.DEFAULT_TYPE, col
         if len(matches) == 1:
             json_output = format_student_record_json(matches.iloc[0])
             json_text = json.dumps(json_output, indent=2, default=str)
-            await update.message.reply_text(
-                f"✅ Found 1 match for '{query}' in {column}:\n```json\n{json_text}\n```",
-                parse_mode="Markdown"
-            )
+            max_message_length = 4000  # Slightly less than Telegram's 4096 limit
+            student_name = matches.iloc[0].get('Name', 'Unknown')
+
+            # Split JSON output into parts if too long
+            if len(json_text) > max_message_length - 100:
+                parts = []
+                current_part = "{\n"
+                lines = json_text.split("\n")[1:-1]  # Skip opening and closing braces
+                for line in lines:
+                    if len(current_part) + len(line) + 100 > max_message_length:
+                        parts.append(f"✅ Found 1 match for '{query}' in {column} (Part {len(parts) + 1}):\n```json\n{current_part.rstrip(',\n')}\n}}```")
+                        current_part = "{\n" + line + "\n"
+                    else:
+                        current_part += line + "\n"
+                if current_part.strip() != "{":
+                    parts.append(f"✅ Found 1 match for '{query}' in {column} (Part {len(parts) + 1}):\n```json\n{current_part.rstrip(',\n')}\n}}```")
+                
+                for part in parts:
+                    await update.message.reply_text(part, parse_mode="Markdown")
+            else:
+                await update.message.reply_text(
+                    f"✅ Found 1 match for '{query}' in {column}:\n```json\n{json_text}\n```",
+                    parse_mode="Markdown"
+                )
+
             if user_id != ADMIN_ID:
-                student_name = matches.iloc[0].get('Name', 'Unknown')
                 await notify_admin(context, user_id, update.message.from_user.username, query, column, student_name)
+
             save_log("searches", {
                 "user_id": user_id,
                 "query": query,
                 "column": column,
-                "student_name": matches.iloc[0].get('Name', 'Unknown'),
+                "student_name": student_name,
                 "result_count": len(matches),
                 "timestamp": datetime.now().isoformat()
             })
