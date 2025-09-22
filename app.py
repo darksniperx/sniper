@@ -141,12 +141,20 @@ def load_all_excels():
                         if 'Student Name' in sheet_df.columns:
                             sheet_df['Name'] = sheet_df['Student Name']
                             logger.info(f"Mapped 'Student Name' to 'Name' in {filename}, sheet {sheet_name}")
-                        # Ensure required columns exist
+                        # Ensure required columns
                         required_columns = {'Name', 'Student Email', 'Student Mobile', 'Course'}
                         for col in required_columns:
                             if col not in sheet_df.columns:
-                                sheet_df[col] = "N/A"  # Add missing required columns with "N/A"
+                                sheet_df[col] = "N/A"
                                 logger.warning(f"Added missing column '{col}' in {filename}, sheet {sheet_name}")
+                        # Trim whitespace and convert to lowercase for object columns
+                        for col in sheet_df.select_dtypes(include=['object']).columns:
+                            sheet_df[col] = sheet_df[col].str.strip().str.lower()
+                        # Convert NaN to empty string for all columns
+                        sheet_df = sheet_df.fillna("")
+                        # Convert numeric columns to string, removing .0 for integers
+                        for col in sheet_df.select_dtypes(include=['float64', 'int64']).columns:
+                            sheet_df[col] = sheet_df[col].apply(lambda x: str(int(x)) if pd.notnull(x) and isinstance(x, float) and x.is_integer() else str(x) if pd.notnull(x) else "")
                         logger.info(f"Loaded sheet '{sheet_name}' from {filename} with {len(sheet_df)} rows, columns: {list(sheet_df.columns)}")
                         dfs.append(sheet_df)
                     else:
@@ -164,16 +172,6 @@ def load_all_excels():
     try:
         combined_df = pd.concat(dfs, ignore_index=True)
         logger.info(f"Initial combined DataFrame: {len(combined_df)} rows, columns: {list(combined_df.columns)}")
-        # Trim whitespace and convert to lowercase for object columns
-        for col in combined_df.select_dtypes(include=['object']).columns:
-            combined_df[col] = combined_df[col].str.strip().str.lower()
-        # Apply .fillna("n/a") only to required columns
-        required_columns = {'Name', 'Student Email', 'Student Mobile', 'Course'}
-        for col in required_columns:
-            if col in combined_df.columns:
-                combined_df[col] = combined_df[col].fillna("n/a")
-            else:
-                combined_df[col] = "n/a"
         # Log sample data for debugging
         if not combined_df.empty:
             logger.info(f"Sample data (first 5 rows):\n{combined_df.head().to_dict(orient='records')}")
@@ -1291,6 +1289,14 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     if col not in csv_df.columns:
                         csv_df[col] = "N/A"
                         logger.warning(f"Added missing column '{col}' in {file_name}")
+                # Trim whitespace and convert to lowercase
+                for col in csv_df.select_dtypes(include=['object']).columns:
+                    csv_df[col] = csv_df[col].str.strip().str.lower()
+                # Convert NaN to empty string
+                csv_df = csv_df.fillna("")
+                # Convert numeric columns to clean strings
+                for col in csv_df.select_dtypes(include=['float64', 'int64']).columns:
+                    csv_df[col] = csv_df[col].apply(lambda x: str(int(x)) if pd.notnull(x) and isinstance(x, float) and x.is_integer() else str(x) if pd.notnull(x) else "")
             except Exception as e:
                 error_msg = f"❌ Error reading CSV file: {str(e)}"
                 logger.error(error_msg)
@@ -1324,6 +1330,14 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     if col not in sheet_df.columns:
                         sheet_df[col] = "N/A"
                         logger.warning(f"Added missing column '{col}' in {file_name}, sheet {sheet_name}")
+                # Trim whitespace and convert to lowercase
+                for col in sheet_df.select_dtypes(include=['object']).columns:
+                    sheet_df[col] = sheet_df[col].str.strip().str.lower()
+                # Convert NaN to empty string
+                sheet_df = sheet_df.fillna("")
+                # Convert numeric columns to clean strings
+                for col in sheet_df.select_dtypes(include=['float64', 'int64']).columns:
+                    sheet_df[col] = sheet_df[col].apply(lambda x: str(int(x)) if pd.notnull(x) and isinstance(x, float) and x.is_integer() else str(x) if pd.notnull(x) else "")
                 columns_found.update(sheet_df.columns)
                 row_counts.append(len(sheet_df))
                 logger.info(f"Sheet '{sheet_name}' in {file_name} has {len(sheet_df)} rows, columns: {list(sheet_df.columns)}")
@@ -1884,7 +1898,18 @@ async def health(update: Update, context: ContextTypes.DEFAULT_TYPE):
         })
 
 def format_student_record_json(record):
-    return {key: str(record.get(key, 'N/A')) for key in record.keys()}
+    filtered_record = {}
+    for key, value in record.items():
+        # Skip if value is empty, "nan", or None; use "N/A" for missing data
+        if pd.notnull(value) and str(value).strip() and str(value).lower() != "nan":
+            # Convert numeric values to clean strings (remove .0 for integers)
+            if isinstance(value, float) and value.is_integer():
+                filtered_record[key] = str(int(value))
+            else:
+                filtered_record[key] = str(value)
+        else:
+            filtered_record[key] = "N/A"
+    return filtered_record
 
 async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     logger.error(f"Update {update} caused error {context.error}")
